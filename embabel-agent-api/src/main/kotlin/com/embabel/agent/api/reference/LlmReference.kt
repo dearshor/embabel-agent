@@ -276,7 +276,7 @@ private class UnfoldingReference(
                 name = delegate.toolPrefix(),
                 description = delegate.description,
                 innerTools = innerTools,
-                childToolUsageNotes = childToolUsageNotes,
+                includeContextTool = false,
             )
         )
     }

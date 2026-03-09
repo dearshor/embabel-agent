@@ -23,12 +23,9 @@ import java.util.concurrent.Executor
 import java.util.concurrent.Semaphore
 
 /**
- * Asyncer implementation that uses an Executor for async operations, propagating to worker
- * threads the [AgentProcess] (a domain concern, via [AgentProcessAccessor]) and the current
- * Micrometer Observation (via the official [ContextSnapshotFactory], so spans nest across
- * threads; a no-op when no observation is current, e.g. a NOOP registry).
+ * Asyncer implementation that uses an Executor for async operations
+ * with AgentProcess context propagation to worker threads.
  */
-@ThreadSafe
 class ExecutorAsyncer(
     private val executor: Executor,
 ) : Asyncer {
@@ -36,22 +33,19 @@ class ExecutorAsyncer(
     private val contextSnapshotFactory = ContextSnapshotFactory.builder().clearMissing(true).build()
 
     override fun <T> async(block: () -> T): CompletableFuture<T> {
-        // Capture AgentProcess and the current observation from the calling thread
+        // Capture AgentProcess from calling thread
         val agentProcess = AgentProcessAccessor.getValue()
-        val contextSnapshot = contextSnapshotFactory.captureAll()
 
         return CompletableFuture.supplyAsync({
-            contextSnapshot.setThreadLocals().use {
-                if (agentProcess != null) {
-                    AgentProcessAccessor.setValue(agentProcess)
-                    try {
-                        block()
-                    } finally {
-                        AgentProcessAccessor.reset() // cleanup
-                    }
-                } else {
+            if (agentProcess != null) {
+                AgentProcessAccessor.setValue(agentProcess)
+                try {
                     block()
+                } finally {
+                    AgentProcessAccessor.reset() // cleanup
                 }
+            } else {
+                block()
             }
         }, executor)
     }

@@ -22,6 +22,9 @@ src/main/kotlin/
 │   └── workflow/                           # WorkflowBuilder, ScatterGather, Feedback
 ├── com.embabel.agent.api.dsl/              # Kotlin DSL: agent { }, action { }
 ├── com.embabel.agent.api.event/            # AgenticEvent hierarchy
+├── com.embabel.agent.api.reference/        # LlmReference — typed, lazy LLM object references
+├── com.embabel.agent.api.tool/             # Tool types
+│   └── progressive/                        # UnfoldingTool, ProgressiveTool
 ├── com.embabel.agent.core/                 # Core runtime types
 │   ├── hitl/                               # Human-in-the-loop (Awaitable etc.)
 │   ├── support/                            # DefaultAgentPlatform, SimpleAgentProcess …
@@ -32,7 +35,9 @@ src/main/kotlin/
 ├── com.embabel.chat/                       # Chat session, Conversation, Chatbot
 │   └── agent/                              # AgentProcessChatbot, DefaultChatAgentBuilder
 ├── com.embabel.ux.form/                    # Form model (Form, FormGenerator, FormBinder)
-└── com.embabel.agent.test.unit/            # FakeOperationContext, FakePromptRunner
+├── com.embabel.agent.test.unit/            # FakeOperationContext, FakePromptRunner
+└── com.embabel.agent.spi/                  # SPI layer
+    └── support/                            # AgentProcessAccessor, ExecutorAsyncer, DefaultPlannerFactory …
 ```
 
 ---
@@ -67,6 +72,8 @@ src/main/kotlin/
 | `Condition` | `core/Condition.kt` | Runtime representation of a condition |
 | `Goal` | `core/Goal.kt` | Runtime representation of a goal |
 | `Action` (core) | `core/Action.kt` | Runtime representation of an action |
+| `AgentProcessAccessor` | `spi/support/AgentProcessAccessor.kt` | ThreadLocal accessor used to propagate `AgentProcess` into worker threads |
+| `ExecutorAsyncer` | `spi/support/ExecutorAsyncer.kt` | `Asyncer` implementation backed by an `Executor`; propagates `AgentProcess` context to worker threads |
 
 ### AI interaction
 
@@ -74,8 +81,23 @@ src/main/kotlin/
 |---|---|---|
 | `Ai` | `api/common/Ai.kt` | Gateway to LLM and embedding operations |
 | `PromptRunner` | `api/common/PromptRunner.kt` | Fluent builder for a single LLM prompt |
+| `PromptRunner.Rendering` | `api/common/PromptRunner.kt` | Chatbot rendering context; use `respond()` for safe, exception-handling replies |
 | `OperationContext` | `api/common/OperationContext.kt` | Context passed into action methods |
 | `ActionContext` | `api/common/ActionContext.kt` | Extends `OperationContext` for actions |
+
+#### `Rendering.respond()` — safe reply with error callback
+
+`PromptRunner.Rendering` exposes a `respond()` overload that wraps `respondWithSystemPrompt()` in a try/catch. If the LLM call fails, the `onFailure` callback is invoked instead of propagating the exception:
+
+```kotlin
+rendering("my-template").respond(
+    conversation = conversation,
+    model = mapOf("user" to user),
+    onFailure = { error -> AssistantMessage("Sorry, something went wrong.") },
+)
+```
+
+This is the recommended approach in chatbot actions where a failed LLM call should produce a graceful user-facing message rather than crashing the session.
 
 ### Planning
 
@@ -104,6 +126,20 @@ src/main/kotlin/
 | `Conversation` | `chat/Conversation.kt` | Ordered list of messages |
 | `AgentProcessChatbot` | `chat/agent/AgentProcessChatbot.kt` | Chatbot backed by an AgentProcess |
 
+### Tools
+
+| Type | File | Purpose |
+|---|---|---|
+| `UnfoldingTool` | `api/tool/progressive/UnfoldingTool.kt` | A "Matryoshka" tool that exposes an outer tool; when invoked, replaces itself with a set of inner tools |
+| `ProgressiveTool` | `api/tool/progressive/ProgressiveTool.kt` | Marker interface for tools that evolve during an LLM conversation |
+| `LlmReference` | `api/reference/LlmReference.kt` | Lazy, typed reference to an LLM-created object; resolved on first access |
+
+#### `UnfoldingTool` — `includeContextTool` parameter
+
+`UnfoldingTool.of(...)` accepts an optional `includeContextTool: Boolean` parameter (defaults to `true`). Set it to `false` to prevent the framework context tool from being injected as one of the inner tools when the unfolding tool expands. `LlmReference` sets this to `false` internally when building its unfolding reference, so the context tool is not visible to the LLM during reference resolution.
+
+---
+
 ### Human-in-the-loop
 
 | Type | File | Purpose |
@@ -119,6 +155,18 @@ src/main/kotlin/
 | `AgenticEvent` | `api/event/AgenticEvent.kt` | Base event type |
 | `AgentProcessEvent` | `api/event/AgentProcessEvent.kt` | Events scoped to a process |
 | `AgenticEventListener` | `api/event/AgenticEventListener.kt` | Listener interface; implement and register as a bean |
+
+---
+
+## AgentProcess context propagation to worker threads
+
+When actions use `Asyncer` (e.g. via `context.async { ... }` or `context.parallelMap { ... }`), the current `AgentProcess` is automatically propagated to each worker thread via `AgentProcessAccessor`:
+
+1. Before submitting the task, `ExecutorAsyncer` captures the calling thread's `AgentProcess` via `AgentProcessAccessor.getValue()`.
+2. Inside the worker thread, `AgentProcessAccessor.setValue(agentProcess)` restores the context.
+3. After the block completes (or throws), `AgentProcessAccessor.reset()` cleans up the ThreadLocal to prevent stale state.
+
+This ensures that thread-contextual operations (event publishing, logging enrichment, etc.) work correctly inside parallel sub-tasks without manual propagation.
 
 ---
 

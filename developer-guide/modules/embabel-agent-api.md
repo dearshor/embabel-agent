@@ -127,6 +127,10 @@ This is the recommended approach in chatbot actions where a failed LLM call shou
 | `Conversation` | `chat/Conversation.kt` | Ordered list of messages |
 | `AgentProcessChatbot` | `chat/agent/AgentProcessChatbot.kt` | Chatbot backed by an AgentProcess |
 
+#### Message serialization
+
+Chat `Message` objects (and their multimodal `ContentPart` members) are fully JSON-serializable with Jackson. The `ContentPart` sealed interface uses `@JsonTypeInfo(use = JsonTypeInfo.Id.DEDUCTION)` with `@JsonSubTypes` for `TextPart` and `ImagePart`, enabling polymorphic round-trip serialization without an explicit type discriminator field. This allows conversation histories to be persisted, transmitted over the wire, or used in REST APIs.
+
 ### Tools
 
 | Type | File | Purpose |

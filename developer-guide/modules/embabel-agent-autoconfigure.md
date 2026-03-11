@@ -60,6 +60,7 @@ Each model config class follows the same pattern:
    - Registers `Llm` beans for each model.
 3. Register your configuration in `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`.
 4. Implement `OptionsConverter<YourProviderChatOptions>` if the provider has non-standard options.
+5. If the provider requires a specific tool response format (e.g. Google GenAI requires valid JSON objects), supply a `ToolResponseContentAdapter` when constructing `SpringAiLlmService`. See `GoogleGenAiModelsConfig` and `JsonWrappingToolResponseContentAdapter` for an example.
 
 ---
 

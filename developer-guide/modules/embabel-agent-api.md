@@ -67,7 +67,7 @@ src/main/kotlin/
 | `AgentProcess` | `core/AgentProcess.kt` | A single running execution of an agent |
 | `SimpleAgentProcess` | `core/support/SimpleAgentProcess.kt` | Single-threaded process implementation |
 | `ConcurrentAgentProcess` | `core/support/ConcurrentAgentProcess.kt` | Concurrent (parallel action) implementation |
-| `ProcessOptions` | `core/ProcessOptions.kt` | Verbosity, identity, blackboard, etc. |
+| `ProcessOptions` | `core/ProcessOptions.kt` | Verbosity, identity, blackboard, tool call context, etc. |
 | `AgentScope` | `core/AgentScope.kt` | A set of actions, goals, conditions |
 | `Condition` | `core/Condition.kt` | Runtime representation of a condition |
 | `Goal` | `core/Goal.kt` | Runtime representation of a goal |
@@ -84,6 +84,7 @@ src/main/kotlin/
 | `PromptRunner.Rendering` | `api/common/PromptRunner.kt` | Chatbot rendering context; use `respond()` for safe, exception-handling replies |
 | `OperationContext` | `api/common/OperationContext.kt` | Context passed into action methods |
 | `ActionContext` | `api/common/ActionContext.kt` | Extends `OperationContext` for actions |
+| `LlmInteraction` | `core/support/LlmInteraction.kt` | Describes a single LLM interaction; carries `toolCallContext` for the tool loop |
 
 #### `Rendering.respond()` — safe reply with error callback
 
@@ -130,9 +131,61 @@ This is the recommended approach in chatbot actions where a failed LLM call shou
 
 | Type | File | Purpose |
 |---|---|---|
+| `Tool` | `api/tool/Tool.kt` | Core tool interface with `call(input)` and `call(input, context)` overloads |
+| `ToolCallContext` | `api/tool/ToolCallContext.kt` | Immutable, framework-agnostic context for out-of-band metadata (auth tokens, tenant IDs, correlation IDs) |
+| `DelegatingTool` | `api/tool/DelegatingTool.kt` | Interface for tool decorators; provides canonical two-arg `call(input, context)` entry point |
+| `MethodTool` | `api/tool/MethodTool.kt` | Wraps `@LlmTool`-annotated methods; auto-injects `ToolCallContext` parameters |
+| `ToolCallContextMcpMetaConverter` | `tools/mcp/ToolCallContextMcpMetaConverter.kt` | Filters/transforms `ToolCallContext` entries before sending as MCP `_meta` to remote servers |
+| `ToolResponseContentAdapter` | `spi/support/springai/ToolResponseContentAdapter.kt` | Adapts tool response content for provider-specific format requirements |
+| `JsonWrappingToolResponseContentAdapter` | `spi/support/springai/ToolResponseContentAdapter.kt` | Wraps non-JSON tool responses in `{"result": "..."}` for providers like Google GenAI |
 | `UnfoldingTool` | `api/tool/progressive/UnfoldingTool.kt` | A "Matryoshka" tool that exposes an outer tool; when invoked, replaces itself with a set of inner tools |
 | `ProgressiveTool` | `api/tool/progressive/ProgressiveTool.kt` | Marker interface for tools that evolve during an LLM conversation |
 | `LlmReference` | `api/reference/LlmReference.kt` | Lazy, typed reference to an LLM-created object; resolved on first access |
+
+#### `ToolCallContext` — out-of-band metadata for tools
+
+`ToolCallContext` is an immutable map-like container that carries metadata (auth tokens, tenant IDs, correlation IDs, etc.) to tools without polluting the tool's JSON input schema. It flows through the entire tool pipeline:
+
+- **`ProcessOptions.toolCallContext`** — set at process creation to pass context to all tools in the execution.
+- **`Tool.call(input, context)`** — the two-arg overload receives context explicitly. The single-arg `call(input)` delegates through `ToolCallContext.EMPTY`.
+- **`DelegatingTool`** — decorator chains propagate context automatically. The two-arg `call(input, context)` is the **canonical entry point** for decorator logic; the single-arg overload routes through it. Decorators should override only the two-arg method.
+- **`MethodTool`** — if an `@LlmTool`-annotated method declares a parameter of type `ToolCallContext`, the framework injects the current context automatically (the parameter is excluded from the JSON input schema sent to the LLM).
+- **`SpringToolCallbackAdapter`** — bridges Spring AI's `ToolContext` with `ToolCallContext` bidirectionally.
+- **`DefaultToolLoop`** — passes context to each tool call during LLM tool loop execution.
+
+Factory methods:
+- `ToolCallContext.of(mapOf("tenantId" to "acme"))` — from a map
+- `ToolCallContext.of("tenantId" to "acme", "apiKey" to "secret")` — from pairs
+- `ToolCallContext.EMPTY` — empty context
+- `ctx1.merge(ctx2)` — merge two contexts (ctx2 wins on conflict)
+
+#### `ToolCallContextMcpMetaConverter` — filtering context for MCP
+
+Controls which `ToolCallContext` entries cross the process boundary to remote MCP servers. This prevents sensitive entries (API keys, auth tokens) from leaking to untrusted servers.
+
+- `ToolCallContextMcpMetaConverter.passThrough()` — propagate all entries (trusted servers only)
+- `ToolCallContextMcpMetaConverter.noOp()` — suppress all metadata
+- `ToolCallContextMcpMetaConverter.allowKeys("tenantId", "correlationId")` — allowlist (recommended for production)
+- `ToolCallContextMcpMetaConverter.denyKeys("apiKey", "secretToken")` — denylist
+- Register a custom `@Bean` of type `ToolCallContextMcpMetaConverter` to apply globally.
+
+#### `ToolResponseContentAdapter` — provider-specific tool response formatting
+
+Some LLM providers require tool responses in specific formats. For example, Google GenAI requires valid JSON objects — plain text causes parse errors. `ToolResponseContentAdapter` is a per-provider strategy plugged in at configuration time:
+
+- `ToolResponseContentAdapter.PASSTHROUGH` — default, passes content unchanged (OpenAI, Anthropic).
+- `JsonWrappingToolResponseContentAdapter` — wraps non-JSON responses as `{"result": "<content>"}` (Google GenAI).
+
+#### `Tool.ContextAwareFunction` — functional interface for context-aware tools
+
+`Tool.of(name, description, inputSchema, function)` now accepts a `ContextAwareFunction` in addition to the existing `Function` interface. Use `ContextAwareFunction` when the tool needs access to out-of-band metadata:
+
+```kotlin
+val myTool = Tool.of("my-tool", "description", InputSchema.empty()) { input, context ->
+    val tenantId = context.get<String>("tenantId") ?: "default"
+    Tool.Result.text("result for $tenantId")
+}
+```
 
 #### `UnfoldingTool` — `includeContextTool` parameter
 
@@ -167,6 +220,14 @@ When actions use `Asyncer` (e.g. via `context.async { ... }` or `context.paralle
 3. After the block completes (or throws), `AgentProcessAccessor.reset()` cleans up the ThreadLocal to prevent stale state.
 
 This ensures that thread-contextual operations (event publishing, logging enrichment, etc.) work correctly inside parallel sub-tasks without manual propagation.
+
+---
+
+## Form generation
+
+`SimpleFormGenerator` generates UI forms from Kotlin data classes. It skips:
+- Properties annotated with `@NoFormField`.
+- Non-nullable constructor parameters with defaults (e.g. `timestamp: Instant = Instant.now()`), which are considered auto-populated and not user input. Nullable parameters with defaults (e.g. `bio: String? = null`) are treated as optional user fields and still appear on the form.
 
 ---
 

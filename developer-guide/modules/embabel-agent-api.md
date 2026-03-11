@@ -68,7 +68,7 @@ src/main/kotlin/
 | `SimpleAgentProcess` | `core/support/SimpleAgentProcess.kt` | Single-threaded process implementation |
 | `ConcurrentAgentProcess` | `core/support/ConcurrentAgentProcess.kt` | Concurrent (parallel action) implementation |
 | `ProcessOptions` | `core/ProcessOptions.kt` | Verbosity, identity, blackboard, tool call context, etc. |
-| `AgentScope` | `core/AgentScope.kt` | A set of actions, goals, conditions |
+| `AgentScope` | `core/AgentScope.kt` | A set of actions, goals, conditions; `referenceTypes` allows adding custom domain types for schema resolution without making them agent contributions |
 | `Condition` | `core/Condition.kt` | Runtime representation of a condition |
 | `Goal` | `core/Goal.kt` | Runtime representation of a goal |
 | `Action` (core) | `core/Action.kt` | Runtime representation of an action |
@@ -203,7 +203,18 @@ val myTool = Tool.of("my-tool", "description", InputSchema.empty()) { input, con
 |---|---|---|
 | `Awaitable` | `core/hitl/Awaitable.kt` | Suspend an action; resume when value arrives |
 | `ConfirmationRequest` | `core/hitl/ConfirmationRequest.kt` | Request human confirmation |
-| `FormBindingRequest` | `core/hitl/FormBindingRequest.kt` | Request user to fill a form |
+| `FormBindingRequest` | `core/hitl/FormBindingRequest.kt` | Request user to fill a form; optional `bindingName` controls where the result is stored on the blackboard |
+
+#### `FormBindingRequest.bindingName` — named slot binding
+
+By default, when a form is submitted the bound instance is added to the blackboard at the unnamed default slot (`"it"` via `agentProcess += boundInstance`). Supply a non-null `bindingName` to store it under a specific key instead (`agentProcess[bindingName] = boundInstance`). This is useful when multiple form results of the same type must coexist on the blackboard:
+
+```kotlin
+FormBindingRequest(
+    form = myForm,
+    bindingName = "shippingAddress",   // stored as agentProcess["shippingAddress"]
+)
+```
 
 ### Events
 
@@ -224,6 +235,50 @@ When actions use `Asyncer` (e.g. via `context.async { ... }` or `context.paralle
 3. After the block completes (or throws), `AgentProcessAccessor.reset()` cleans up the ThreadLocal to prevent stale state.
 
 This ensures that thread-contextual operations (event publishing, logging enrichment, etc.) work correctly inside parallel sub-tasks without manual propagation.
+
+---
+
+## Asynchronous Mode and Java 25
+
+Async execution is configured in `AsyncConfiguration.kt`. The default implementation uses the Spring-managed task executor with virtual threads enabled by:
+
+```properties
+# agent-application.properties
+spring.threads.virtual.enabled=true
+```
+
+If the Spring-managed executor cannot be obtained, the implementation falls back to `Executors.newCachedThreadPool()`. The framework consistently routes all parallel execution through the `Asyncer` abstraction across agent invocations, actions, the tool loop, and shell commands.
+
+### Java 25 and container CPU detection
+
+Java 25 corrects the JVM's historically imprecise cgroup CPU limit reading: prior to Java 25 the JVM often reported the host's full CPU count rather than the container's allocation. With the fix (`JDK-8362881`), `availableProcessors()` now accurately reflects the container's cgroup limit.
+
+**Effect on Embabel:** Because `ForkJoinPool.commonPool` sizes its parallelism off `availableProcessors()`, running on Java 25 inside a CPU-constrained container (e.g. Kubernetes with `resources.limits.cpu: "1"`) can reduce the common pool parallelism to 1, serialising any code that relies on it.
+
+**Embabel core is unaffected** — all parallel paths route through `ExecutorAsyncer` backed by `applicationTaskExecutor` (a `ThreadPoolTaskExecutor`), not `ForkJoinPool.commonPool`. The fallback also uses `newCachedThreadPool()`, not `ForkJoinPool`.
+
+**Custom code checklist** — if you observe unexpected serialisation on Java 25 in containers, audit your code for:
+
+- `CompletableFuture.supplyAsync(...)` without an explicit `Executor`
+- Kotlin coroutines using `Dispatchers.Default` (backed by `ForkJoinPool` under Java < 25 defaults)
+- Third-party libraries that depend on `ForkJoinPool.commonPool`
+
+**Workarounds (if needed)**
+
+```yaml
+# Kubernetes — set an explicit CPU limit
+resources:
+  limits:
+    cpu: "4"
+  requests:
+    cpu: "2"
+```
+
+Or override the pool size via JVM flag:
+
+```bash
+java -Djava.util.concurrent.ForkJoinPool.common.parallelism=4 -jar agent.jar
+```
 
 ---
 

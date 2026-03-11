@@ -43,6 +43,8 @@ com.embabel.agent.shell/
 | `models` | `models()` | List all registered LLM models |
 | `profiles` | `profiles()` | Show active Spring profiles |
 | `clear` | `clear()` | Clear the shared blackboard |
+| `set-context` / `sc` | `setContext(...)` | Set persistent tool call context as key=value pairs (e.g. `set-context tenantId=acme,apiKey=secret`). Use `set-context clear` to reset. |
+| `show-context` | `showContext()` | Show current persistent tool call context |
 
 ### Useful flags on `execute`
 
@@ -53,6 +55,7 @@ com.embabel.agent.shell/
 | `-o` | Open mode (use all goals/actions across all agents) |
 | `-g <name>` | Force a specific goal |
 | `-a <name>` | Force a specific agent |
+| `-c` / `--context` | One-off tool call context as key=value pairs (merged with persistent context; one-off wins on conflict) |
 
 ---
 
@@ -74,10 +77,23 @@ To add a new personality:
 
 ---
 
+## Tool call context
+
+The shell supports passing out-of-band metadata (auth tokens, tenant IDs, etc.) to tools via `ToolCallContext`. There are two mechanisms:
+
+1. **Persistent context** — set via `set-context tenantId=acme,apiKey=secret`. Applied to all subsequent `execute` invocations until cleared with `set-context clear`.
+2. **One-off context** — pass `-c tenantId=acme` on `execute`. Merged with the persistent context; one-off values win on conflict.
+
+The effective context is attached to `ProcessOptions.toolCallContext` and propagated to all tools during execution.
+
+---
+
 ## How `execute` works
 
 ```
 ShellCommands.execute(intent, ...)
+    │
+    ├── Merge persistent + one-off ToolCallContext
     │
     ├── Autonomy.createGoalSeeker(intent, agentPlatform)
     │       └── LLM ranks all known goals by relevance

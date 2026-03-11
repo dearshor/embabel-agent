@@ -36,6 +36,15 @@ Located under `embabel-agent-autoconfigure/models/`.
 | `embabel-agent-bedrock-autoconfigure` | AWS Bedrock | `BedrockModelsConfig` | AWS credentials |
 | `embabel-agent-gemini-autoconfigure` | Google Gemini (VertexAI) | `GeminiModelsConfig` | `GOOGLE_APPLICATION_CREDENTIALS` |
 | `embabel-agent-google-genai-autoconfigure` | Google GenAI Studio | `GoogleGenAiModelsConfig` | `GOOGLE_STUDIO_API_KEY` |
+
+**New Google GenAI / Gemini models (added recently)**
+
+| Constant | Model ID | Notes |
+|---|---|---|
+| `GEMINI_3_1_FLASH_LITE_PREVIEW` | `gemini-3.1-flash-lite-preview` | Lightweight preview model; pricing 0.25 / 1.50 |
+| `GEMINI_3_1_PRO_PREVIEW_CUSTOMTOOLS` | `gemini-3.1-pro-preview-customtools` | Pro preview with custom tool support; pricing 2.00 / 12.00 |
+
+Both constants are available in `GeminiModels.java` (Java) and `GoogleGenAiModels.kt` (Kotlin), with `knowledge_cutoff_date: 2025-01-01` and `max_tokens: 65536`.
 | `embabel-agent-mistral-ai-autoconfigure` | Mistral AI | `MistralAiModelsConfig` | `MISTRAL_API_KEY` |
 | `embabel-agent-ollama-autoconfigure` | Ollama (local) | `OllamaModelsConfig` | — (localhost) |
 | `embabel-agent-deepseek-autoconfigure` | DeepSeek | `DeepSeekModelsConfig` | `DEEPSEEK_API_KEY` |

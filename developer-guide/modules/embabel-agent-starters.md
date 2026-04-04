@@ -22,9 +22,12 @@ Starters are thin, opinionated dependency aggregators. They pull together the re
 | `embabel-agent-starter-lmstudio` | LM Studio local model support |
 | `embabel-agent-starter-openai-custom` | Custom OpenAI-compatible endpoint |
 | `embabel-agent-starter-shell` | Spring Shell CLI |
+| `embabel-agent-starter-minimax` | MiniMax model support |
 | `embabel-agent-starter-mcpserver` | MCP SSE server |
+| `embabel-agent-starter-mcpserver-security` | MCP server security (`@SecureAgentTool` enforcement) |
 | `embabel-agent-starter-a2a` | Google A2A protocol |
 | `embabel-agent-starter-observability` | Tracing & metrics |
+| `embabel-agent-starter-onnx` | ONNX Runtime local embedding service |
 | `embabel-agent-starter-webmvc` | Spring MVC agent endpoint support |
 
 ## Typical dependencies

@@ -87,6 +87,40 @@ fun writeup(person: StarPerson, ..., ai: Ai): Writeup = ...
 
 ---
 
+## MCP server security
+
+The `embabel-agent-mcp-security` module provides method-level access control for actions exposed as MCP tools. Add the `embabel-agent-starter-mcpserver-security` starter to activate it.
+
+### `@SecureAgentTool`
+
+Annotate any `@Action` method (or an entire `@Agent` class) with `@SecureAgentTool` and a Spring Security SpEL expression:
+
+```kotlin
+@SecureAgentTool("hasAuthority('payments:write')")
+@AchievesGoal(description = "Process a payment", export = Export(remote = true))
+@Action
+fun processPayment(request: PaymentRequest, context: OperationContext): PaymentResult
+```
+
+The expression is evaluated against the current Spring Security `Authentication` before the action body runs. Supported syntax is identical to `@PreAuthorize`:
+
+```kotlin
+@SecureAgentTool("hasAuthority('finance:admin')")
+@SecureAgentTool("hasAnyAuthority('finance:read', 'finance:admin')")
+@SecureAgentTool("hasRole('ADMIN')")
+@SecureAgentTool("@myPolicy.canAccess(authentication, #request)")
+@SecureAgentTool("hasAuthority('finance:read') and #request.amount < 10000")
+```
+
+- **Class-level placement**: all `@Action` methods in the agent inherit the restriction.
+- **Method-level placement**: overrides any class-level annotation on that method.
+
+`SecureAgentToolAspect` enforces the expression. An `AccessDeniedException` is thrown when the expression evaluates to `false`, resulting in a `403` at the MCP transport layer.
+
+> **Note:** `@SecureAgentTool` covers method-level security only. To protect the MCP SSE endpoint at the HTTP transport layer, configure Spring Security's `HttpSecurity` to secure the `/sse` and `/mcp` paths with an OAuth2 resource server or equivalent.
+
+---
+
 ## Extension points
 
 ### Add a custom tool publisher

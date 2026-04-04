@@ -18,6 +18,7 @@ Users do not depend on this module directly; they use starters from `embabel-age
 | `embabel-agent-platform-autoconfigure` | `AgentPlatformConfiguration` | `DefaultAgentPlatform`, `Autonomy`, `ToolGroupResolver`, `Asyncer` |
 | `embabel-agent-shell-autoconfigure` | `ShellConfiguration` | `ShellCommands`, personality providers, `TerminalServices` |
 | `embabel-agent-mcpserver-autoconfigure` | `McpSyncServerConfiguration` / `McpAsyncServerConfiguration` | MCP SSE server, tool publishers |
+| `embabel-agent-mcpserver-security-autoconfigure` | `SecureAgentToolConfiguration` | `SecureAgentToolAspect` + Spring method security for `@SecureAgentTool` |
 | `embabel-agent-a2a-autoconfigure` | `A2AConfiguration` | A2A endpoint registration, `A2ARequestHandler` |
 | `embabel-agent-observability-autoconfigure` | `EmbabelObservabilityAutoConfiguration` | Tracing observation handlers, metrics listener, MDC propagation |
 | `embabel-agent-netty-client-autoconfigure` | `NettyClientConfiguration` | Netty-based HTTP client (for streaming) |
@@ -36,20 +37,52 @@ Located under `embabel-agent-autoconfigure/models/`.
 | `embabel-agent-bedrock-autoconfigure` | AWS Bedrock | `BedrockModelsConfig` | AWS credentials |
 | `embabel-agent-gemini-autoconfigure` | Google Gemini (VertexAI) | `GeminiModelsConfig` | `GOOGLE_APPLICATION_CREDENTIALS` |
 | `embabel-agent-google-genai-autoconfigure` | Google GenAI Studio | `GoogleGenAiModelsConfig` | `GOOGLE_STUDIO_API_KEY` |
-
-**New Google GenAI / Gemini models (added recently)**
-
-| Constant | Model ID | Notes |
-|---|---|---|
-| `GEMINI_3_1_FLASH_LITE_PREVIEW` | `gemini-3.1-flash-lite-preview` | Lightweight preview model; pricing 0.25 / 1.50 |
-| `GEMINI_3_1_PRO_PREVIEW_CUSTOMTOOLS` | `gemini-3.1-pro-preview-customtools` | Pro preview with custom tool support; pricing 2.00 / 12.00 |
-
-Both constants are available in `GeminiModels.java` (Java) and `GoogleGenAiModels.kt` (Kotlin), with `knowledge_cutoff_date: 2025-01-01` and `max_tokens: 65536`.
+| `embabel-agent-minimax-autoconfigure` | MiniMax | `MiniMaxModelsConfig` | `MINIMAX_API_KEY` |
 | `embabel-agent-mistral-ai-autoconfigure` | Mistral AI | `MistralAiModelsConfig` | `MISTRAL_API_KEY` |
 | `embabel-agent-ollama-autoconfigure` | Ollama (local) | `OllamaModelsConfig` | — (localhost) |
 | `embabel-agent-deepseek-autoconfigure` | DeepSeek | `DeepSeekModelsConfig` | `DEEPSEEK_API_KEY` |
 | `embabel-agent-dockermodels-autoconfigure` | Docker Model Runner | `DockerLocalModelsConfig` | — (Docker Desktop) |
 | `embabel-agent-lmstudio-autoconfigure` | LM Studio | `LmStudioModelsConfig` | — (localhost) |
+| `embabel-agent-onnx-autoconfigure` | ONNX Runtime (local embeddings) | `OnnxEmbeddingAutoConfiguration` | — (local model files) |
+
+**MiniMax models**
+
+MiniMax is an OpenAI-compatible provider with large context windows (up to 1M tokens). Available constants in `MiniMaxModels.kt`:
+
+| Constant | Model ID |
+|---|---|
+| `MiniMaxModels.MINIMAX_M2_7` | `MiniMax-M2.7` |
+| `MiniMaxModels.MINIMAX_M2_7_HIGHSPEED` | `MiniMax-M2.7-highspeed` |
+
+Activated by setting `MINIMAX_API_KEY`. The configuration prefix is `embabel.agent.platform.models.minimax`.
+
+**New Google GenAI / Gemini models**
+
+| Constant | Model ID | Notes |
+|---|---|---|
+| `GEMINI_3_1_FLASH_LITE_PREVIEW` | `gemini-3.1-flash-lite-preview` | Lightweight preview model |
+| `GEMINI_3_1_PRO_PREVIEW_CUSTOMTOOLS` | `gemini-3.1-pro-preview-customtools` | Pro preview with custom tool support |
+
+Both constants are available in `GeminiModels.java` (Java) and `GoogleGenAiModels.kt` (Kotlin).
+
+**Updated Anthropic models**
+
+The following Claude 4.x model constants are available in `AnthropicModels.kt`:
+
+| Constant | Model ID |
+|---|---|
+| `CLAUDE_37_SONNET` | `claude-3-7-sonnet-latest` |
+| `CLAUDE_35_HAIKU` | `claude-3-5-haiku-latest` |
+| `CLAUDE_40_OPUS` | `claude-opus-4-20250514` |
+| `CLAUDE_41_OPUS` | `claude-opus-4-1` |
+| `CLAUDE_SONNET_4_5` | `claude-sonnet-4-5` |
+| `CLAUDE_HAIKU_4_5` | `claude-haiku-4-5` |
+| `CLAUDE_OPUS_4_6` | `claude-opus-4-6` |
+| `CLAUDE_SONNET_4_6` | `claude-sonnet-4-6` |
+
+**ONNX local embeddings**
+
+`embabel-agent-onnx-autoconfigure` wires up `OnnxEmbeddingService` as a local embedding provider using ONNX Runtime and DJL HuggingFace tokenizers. The default model is `all-MiniLM-L6-v2` (384 dimensions). Use the `embabel-agent-starter-onnx` starter to activate.
 
 Each model config class follows the same pattern:
 

@@ -144,6 +144,8 @@ Chat `Message` objects (and their multimodal `ContentPart` members) are fully JS
 | `JsonWrappingToolResponseContentAdapter` | `spi/support/springai/ToolResponseContentAdapter.kt` | Wraps non-JSON tool responses in `{"result": "..."}` for providers like Google GenAI |
 | `UnfoldingTool` | `api/tool/progressive/UnfoldingTool.kt` | A "Matryoshka" tool that exposes an outer tool; when invoked, replaces itself with a set of inner tools |
 | `ProgressiveTool` | `api/tool/progressive/ProgressiveTool.kt` | Marker interface for tools that evolve during an LLM conversation |
+| `ProgressTool` | `api/tool/ProgressTool.kt` | Tool that allows an LLM to report transient progress messages through the output channel |
+| `CommunicateTool` | `api/tool/CommunicateTool.kt` | Tool that allows an LLM to send a permanent assistant chat message through the output channel |
 | `LlmReference` | `api/reference/LlmReference.kt` | Lazy, typed reference to an LLM-created object; resolved on first access |
 
 #### `ToolCallContext` — out-of-band metadata for tools
@@ -191,9 +193,92 @@ val myTool = Tool.of("my-tool", "description", InputSchema.empty()) { input, con
 }
 ```
 
-#### `UnfoldingTool` — `includeContextTool` parameter
+#### `UnfoldingTool` — `@UnfoldingTools` annotation
 
-`UnfoldingTool.of(...)` accepts an optional `includeContextTool: Boolean` parameter (defaults to `true`). Set it to `false` to prevent the framework context tool from being injected as one of the inner tools when the unfolding tool expands. `LlmReference` sets this to `false` internally when building its unfolding reference, so the context tool is not visible to the LLM during reference resolution.
+The `@UnfoldingTools` annotation is a class-level shortcut for creating `UnfoldingTool` instances from plain classes. Annotate a class whose `@LlmTool` methods become the inner tools; then call `UnfoldingTool.fromInstance(myInstance)` to produce the facade:
+
+```kotlin
+@UnfoldingTools(
+    name = "database_operations",
+    description = "Database operations. Invoke to see specific tools."
+)
+class DatabaseTools {
+    @LlmTool(description = "Execute a SQL query")
+    fun query(sql: String): QueryResult { ... }
+
+    @LlmTool(description = "Insert a record")
+    fun insert(table: String, data: Map<String, Any>): InsertResult { ... }
+}
+
+val tool = UnfoldingTool.fromInstance(DatabaseTools())
+```
+
+Category-based selection is also supported: when `@LlmTool` methods carry a `category` attribute, invoking the outer tool with that category name reveals only the matching inner tools.
+
+**`includeContextTool` is deprecated.** The context tool has been replaced by a guide tool that is always inserted after the first invocation; the guide lists available sub-tools so the LLM never encounters a `ToolNotFoundException` loop. Any code that sets `includeContextTool = false` should remove it — the property is now ignored.
+
+---
+
+### Agent and Action Early Termination
+
+Two complementary termination mechanisms are available. Both propagate through the tool loop and are cascaded to subagent processes.
+
+**Graceful termination (waits for natural checkpoints)**
+
+Call `terminateAgent(reason)` or `terminateAction(reason)` on the current `AgentProcess` (or via the `ProcessContext` convenience extensions):
+
+```kotlin
+@Action
+fun checkBudget(context: ActionContext): Unit {
+    if (budgetExceeded()) {
+        context.terminateAgent("Budget exceeded — stopping agent.")
+    }
+}
+```
+
+`terminateAgent` signals that the whole process should stop before its next planning tick. `terminateAction` signals that only the current action's tool loop should stop; the agent then continues with the next planned action.
+
+**Immediate termination (throws from a tool)**
+
+| Exception | Effect |
+|---|---|
+| `TerminateAgentException(reason)` | Terminates the entire agent process immediately |
+| `TerminateActionException(reason)` | Terminates the current action only; agent continues |
+
+Both are subclasses of `TerminationException` (which implements `ToolControlFlowSignal`), so you can catch both in a single block:
+
+```kotlin
+@LlmTool(description = "Stop the agent")
+fun stop(reason: String): String {
+    throw TerminateAgentException(reason)
+}
+```
+
+**Cascade to subagents**: when `AgentProcess.kill()` is called on a parent process, the kill signal is propagated automatically to all active subagent processes it owns.
+
+---
+
+### Communication Tools
+
+Two built-in tools let an LLM communicate status information through the `AgentProcess` output channel during a long-running action:
+
+| Type | Name constant | Description |
+|---|---|---|
+| `ProgressTool` | `ProgressTool.NAME` (`"progress"`) | Send a transient status update ("I'm currently fetching data…"). Routes through `ProgressOutputChannelEvent`. |
+| `CommunicateTool` | `CommunicateTool.NAME` (`"communicate"`) | Send a permanent assistant chat message (e.g. "Here is your PR URL: …"). Routes through `MessageOutputChannelEvent`. |
+
+Create instances with `ProgressTool.create()` and `CommunicateTool.create()`, then include them in a tool group or pass them to `withTools(...)` on a `PromptRunner`:
+
+```kotlin
+@Action
+fun longTask(context: ActionContext, ai: Ai): Result {
+    return ai.withDefaultLlm()
+        .withTools(ProgressTool.create(), CommunicateTool.create())
+        .createObject("Complete the long task.")
+}
+```
+
+If no `AgentProcess` is active on the calling thread, both tools log a warning and return a soft error so the action can continue without interruption.
 
 ---
 

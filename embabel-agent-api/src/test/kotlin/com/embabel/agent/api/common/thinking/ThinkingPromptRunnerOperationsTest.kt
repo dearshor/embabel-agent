@@ -18,6 +18,7 @@ package com.embabel.agent.api.common.thinking
 import com.embabel.agent.api.common.PlatformServices
 import com.embabel.agent.api.common.PromptRunner
 import com.embabel.agent.api.common.support.OperationContextPromptRunner
+import com.embabel.agent.api.tool.ToolCallContext
 import com.embabel.agent.api.tool.ToolObject
 import com.embabel.agent.api.tool.callback.ToolLoopInspector
 import com.embabel.agent.api.tool.callback.ToolLoopTransformer
@@ -34,10 +35,10 @@ import com.embabel.common.core.thinking.ThinkingTagType
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import java.lang.reflect.Field
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
-import java.lang.reflect.Field
 
 /**
  * Test for the thinking prompt runner operations.
@@ -264,12 +265,18 @@ class ThinkingPromptRunnerOperationsTest {
 
             override fun withToolLoopTransformers(vararg transformers: ToolLoopTransformer): PromptRunner = this
 
+            override fun withToolNotFoundPolicy(policy: com.embabel.agent.spi.loop.ToolNotFoundPolicy): PromptRunner = this
+
             override fun <T : Any> withToolChainingFrom(
                 type: Class<T>,
                 predicate: com.embabel.agent.api.tool.agentic.DomainToolPredicate<T>,
             ): PromptRunner = this
 
+            override fun withToolCallContext(context: ToolCallContext): PromptRunner = this
+
             override fun withToolChainingFromAny(): PromptRunner = this
+
+            override fun withLlmService(llmService: com.embabel.agent.spi.LlmService<*>): PromptRunner = this
         }
 
         // When/Then: Call withThinking() on StreamingPromptRunner should throw exception

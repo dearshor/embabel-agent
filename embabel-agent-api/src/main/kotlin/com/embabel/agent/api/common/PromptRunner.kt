@@ -18,6 +18,7 @@ package com.embabel.agent.api.common
 import com.embabel.agent.api.common.PromptRunner.Creating
 import com.embabel.agent.api.reference.LlmReference
 import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.ToolCallContext
 import com.embabel.agent.api.tool.ToolObject
 import com.embabel.agent.api.tool.agentic.ToolChaining
 import com.embabel.agent.api.tool.callback.ToolLoopInspector
@@ -26,11 +27,14 @@ import com.embabel.agent.api.validation.guardrails.GuardRail
 import com.embabel.agent.core.ToolGroup
 import com.embabel.agent.core.ToolGroupRequirement
 import com.embabel.agent.core.support.LlmUse
+import com.embabel.agent.spi.LlmService
+import com.embabel.agent.spi.loop.ToolNotFoundPolicy
 import com.embabel.chat.AssistantMessage
 import com.embabel.chat.Conversation
 import com.embabel.chat.Message
 import com.embabel.chat.UserMessage
 import com.embabel.common.ai.model.LlmOptions
+import com.embabel.common.ai.model.PreResolvedModelSelectionCriteria
 import com.embabel.common.ai.prompt.PromptContributor
 import com.embabel.common.ai.prompt.PromptElement
 import com.embabel.common.core.thinking.ThinkingCapability
@@ -87,6 +91,14 @@ interface PromptRunner : LlmUse, PromptRunnerOperations, ToolChaining<PromptRunn
     fun withLlm(llm: LlmOptions): PromptRunner
 
     /**
+     * Use a pre-resolved LLM service, bypassing ModelProvider resolution.
+     * Useful for BYOK (bring your own per-user key) scenarios,
+     * testing, or dynamic provider selection.
+     */
+    fun withLlmService(llmService: LlmService<*>): PromptRunner =
+        withLlm(LlmOptions(modelSelectionCriteria = PreResolvedModelSelectionCriteria(llmService)))
+
+    /**
      * Add a message that will be included in the final prompt.
      */
     fun withMessage(message: Message): PromptRunner =
@@ -116,6 +128,17 @@ interface PromptRunner : LlmUse, PromptRunnerOperations, ToolChaining<PromptRunn
      */
     fun withToolGroup(toolGroup: String): PromptRunner =
         withToolGroup(ToolGroupRequirement(toolGroup))
+
+    /**
+     * Add a tool group with required tool names.
+     * Throws [com.embabel.agent.spi.loop.RequiredToolGroupException] at resolution time
+     * if the group is not found or any required tool name is absent.
+     *
+     * @param toolGroup name of the toolGroup we're requesting
+     * @param requiredToolNames tool names that must be present in the resolved group
+     */
+    fun withToolGroup(toolGroup: String, vararg requiredToolNames: String): PromptRunner =
+        withToolGroup(ToolGroupRequirement(toolGroup, requiredToolNames.toSet()))
 
     /**
      * Allows for dynamic tool groups to be added to the PromptRunner.
@@ -359,6 +382,50 @@ interface PromptRunner : LlmUse, PromptRunnerOperations, ToolChaining<PromptRunn
      * @return PromptRunner instance with the added transformers
      */
     fun withToolLoopTransformers(vararg transformers: ToolLoopTransformer): PromptRunner
+
+    /**
+     * Set out-of-band metadata to pass to tools at call time.
+     *
+     * The context flows through the tool loop to every tool invoked during this
+     * interaction. For MCP tools, entries are forwarded as MCP `_meta` on the wire
+     * (subject to any [com.embabel.agent.tools.mcp.ToolCallContextMcpMetaConverter]
+     * bean configured in the application).
+     *
+     * This context is merged with any context set at the process level via
+     * [com.embabel.agent.core.ProcessOptions]. Interaction-level values win on conflict.
+     *
+     * Example:
+     * ```kotlin
+     * ai.promptRunner()
+     *   .withToolCallContext(ToolCallContext.of("tenantId" to "acme", "locale" to "en-AU"))
+     *   .withToolGroup(CoreToolGroups.WEB)
+     *   .createObject<NewsResult>(prompt)
+     * ```
+     *
+     * @param context the context entries to attach
+     * @return PromptRunner with the tool call context set
+     */
+    fun withToolCallContext(context: ToolCallContext): PromptRunner
+
+    /**
+     * Convenience overload accepting a plain map.
+     *
+     * @param entries the context entries to attach
+     * @return PromptRunner with the tool call context set
+     */
+    fun withToolCallContext(entries: Map<String, Any>): PromptRunner =
+        withToolCallContext(ToolCallContext.of(entries))
+
+    /**
+     * Override the tool-not-found recovery policy for this interaction.
+     * When not set, the system default from configuration is used.
+     *
+     * @param policy the policy to use
+     * @return PromptRunner instance with the specified policy
+     * @see AutoCorrectionPolicy
+     * @see ImmediateThrowPolicy
+     */
+    fun withToolNotFoundPolicy(policy: ToolNotFoundPolicy): PromptRunner
 
     /**
      * Returns a mode for creating strongly-typed objects.

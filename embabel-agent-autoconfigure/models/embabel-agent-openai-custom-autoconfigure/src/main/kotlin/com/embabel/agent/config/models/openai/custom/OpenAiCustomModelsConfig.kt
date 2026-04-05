@@ -22,6 +22,7 @@ import com.embabel.agent.spi.common.RetryProperties
 import com.embabel.agent.spi.support.springai.SpringAiLlmService
 import com.embabel.common.ai.autoconfig.ProviderInitialization
 import com.embabel.common.ai.autoconfig.RegisteredModel
+import com.embabel.common.ai.model.LlmOptionsProperties
 import com.embabel.common.util.ExcludeFromJacocoGeneratedReport
 import io.micrometer.observation.ObservationRegistry
 import org.springframework.beans.factory.ObjectProvider
@@ -31,7 +32,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.http.client.ClientHttpRequestFactory
+import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.web.client.RestClient
 
 /**
  * Configuration properties for OpenAI Custom model settings.
@@ -54,6 +56,18 @@ class OpenAiCustomProperties : RetryProperties {
      * Comma-separated list of custom model IDs to register.
      */
     var models: String? = null
+
+    /**
+     * Custom path for chat completions endpoint (e.g., "/chat/completions" or "/api/chat").
+     * If not set, Spring AI's default "/v1/chat/completions" will be used.
+     */
+    var completionsPath: String? = null
+
+    /**
+     * Custom path for embeddings endpoint.
+     * If not set, Spring AI's default "/v1/embeddings" will be used.
+     */
+    var embeddingsPath: String? = null
 
     /**
      *  Maximum number of attempts.
@@ -85,7 +99,7 @@ class OpenAiCustomProperties : RetryProperties {
  *
  * Example:
  * ```
- * OPENAI_CUSTOM_BASE_URL=https://api.groq.com/openai/v1
+ * OPENAI_CUSTOM_BASE_URL=https://api.groq.com/openai
  * OPENAI_CUSTOM_API_KEY=your-api-key
  * OPENAI_CUSTOM_MODELS=llama-3.3-70b-versatile,mixtral-8x7b-32768,gemma2-9b-it
  * EMBABEL_MODELS_DEFAULT_LLM=llama-3.3-70b-versatile
@@ -95,7 +109,7 @@ class OpenAiCustomProperties : RetryProperties {
  * to specify which model should be the default.
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(OpenAiCustomProperties::class)
+@EnableConfigurationProperties(OpenAiCustomProperties::class, LlmOptionsProperties::class)
 @ExcludeFromJacocoGeneratedReport(reason = "OpenAi Custom configuration can't be unit tested")
 class OpenAiCustomModelsConfig(
     @param:Value("\${OPENAI_CUSTOM_BASE_URL:#{null}}")
@@ -104,18 +118,28 @@ class OpenAiCustomModelsConfig(
     private val envApiKey: String?,
     @param:Value("\${OPENAI_CUSTOM_MODELS:#{null}}")
     private val envCustomModels: String?,
+    @param:Value("\${OPENAI_CUSTOM_COMPLETIONS_PATH:#{null}}")
+    private val envCompletionsPath: String?,
+    @param:Value("\${OPENAI_CUSTOM_EMBEDDINGS_PATH:#{null}}")
+    private val envEmbeddingsPath: String?,
     observationRegistry: ObjectProvider<ObservationRegistry>,
     private val properties: OpenAiCustomProperties,
+    private val llmOptionsProperties: LlmOptionsProperties,
     private val configurableBeanFactory: ConfigurableBeanFactory,
-    requestFactory: ObjectProvider<ClientHttpRequestFactory>,
+    @Qualifier("aiModelRestClientBuilder")
+    restClientBuilder: ObjectProvider<RestClient.Builder>,
 ) : OpenAiCompatibleModelFactory(
     baseUrl = envBaseUrl ?: properties.baseUrl,
-    apiKey = envApiKey ?: properties.apiKey
-    ?: error("OpenAI Custom API key required: set OPENAI_CUSTOM_API_KEY env var or embabel.agent.platform.models.openai.custom.api-key"),
-    completionsPath = null,
-    embeddingsPath = null,
+    apiKey = envApiKey?.trim()?.takeIf { it.isNotEmpty() }
+        ?: properties.apiKey?.trim()?.takeIf { it.isNotEmpty() }
+        ?: error("OpenAI Custom API key required: set OPENAI_CUSTOM_API_KEY env var or embabel.agent.platform.models.openai.custom.api-key"),
+    completionsPath = envCompletionsPath?.trim()?.takeIf { it.isNotEmpty() }
+        ?: properties.completionsPath?.trim()?.takeIf { it.isNotEmpty() },
+    embeddingsPath = envEmbeddingsPath?.trim()?.takeIf { it.isNotEmpty() }
+        ?: properties.embeddingsPath?.trim()?.takeIf { it.isNotEmpty() },
+    httpHeaders = llmOptionsProperties.httpHeaders,
     observationRegistry = observationRegistry.getIfUnique { ObservationRegistry.NOOP },
-    requestFactory = requestFactory,
+    restClientBuilder = restClientBuilder,
 ) {
 
     private val customModelList: List<String> = (envCustomModels ?: properties.models)

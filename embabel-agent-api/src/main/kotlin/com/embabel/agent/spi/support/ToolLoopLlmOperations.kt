@@ -19,6 +19,7 @@ import com.embabel.agent.api.common.Asyncer
 import com.embabel.agent.api.event.LlmRequestEvent
 import com.embabel.agent.api.event.ToolLoopStartEvent
 import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.ToolCallContext
 import com.embabel.agent.api.tool.config.ToolLoopConfiguration
 import com.embabel.agent.core.LlmInvocation
 import com.embabel.agent.core.ReplanRequestedException
@@ -28,6 +29,7 @@ import com.embabel.agent.core.support.LlmInteraction
 import com.embabel.agent.spi.AutoLlmSelectionCriteriaResolver
 import com.embabel.agent.spi.LlmService
 import com.embabel.agent.spi.ToolDecorator
+import com.embabel.agent.spi.loop.AutoCorrectionPolicy
 import com.embabel.agent.spi.loop.ChainedToolInjectionStrategy
 import com.embabel.agent.spi.loop.LlmMessageSender
 import com.embabel.agent.spi.loop.ToolInjectionStrategy
@@ -54,6 +56,7 @@ import io.micrometer.observation.ObservationRegistry
 import jakarta.validation.Validator
 import java.time.Duration
 import java.time.Instant
+import javax.annotation.concurrent.ThreadSafe
 
 const val PROMPT_ELEMENT_SEPARATOR = "\n----\n"
 
@@ -94,6 +97,7 @@ interface OutputConverter<T> {
  * @param observationRegistry Registry for distributed tracing observations
  * @param templateRenderer TemplateRenderer for rendering prompt templates (default: NoOpTemplateRenderer)
  */
+@ThreadSafe
 open class ToolLoopLlmOperations(
     modelProvider: ModelProvider,
     toolDecorator: ToolDecorator,
@@ -105,7 +109,7 @@ open class ToolLoopLlmOperations(
     internal open val objectMapper: ObjectMapper = jacksonObjectMapper().registerModule(JavaTimeModule()),
     protected val observationRegistry: ObservationRegistry = ObservationRegistry.NOOP,
     asyncer: Asyncer = ExecutorAsyncer(java.util.concurrent.Executors.newCachedThreadPool()),
-    protected val toolLoopFactory: ToolLoopFactory = ToolLoopFactory.create(ToolLoopConfiguration(), asyncer),
+    protected val toolLoopFactory: ToolLoopFactory = ToolLoopFactory.create(ToolLoopConfiguration(), asyncer, AutoCorrectionPolicy()),
     protected val templateRenderer: TemplateRenderer = NoOpTemplateRenderer,
 ) : AbstractLlmOperations(
     toolDecorator = toolDecorator,
@@ -145,6 +149,9 @@ open class ToolLoopLlmOperations(
         val injectedToolDecorator = createInjectedToolDecorator(llmRequestEvent, interaction)
         val injectionStrategy = createInjectionStrategy(interaction)
 
+        // Merge process-level and interaction-level context (interaction wins on conflict)
+        val effectiveContext = resolveToolCallContext(llmRequestEvent, interaction)
+
         val toolLoop = toolLoopFactory.create(
             llmMessageSender = messageSender,
             objectMapper = objectMapper,
@@ -153,6 +160,8 @@ open class ToolLoopLlmOperations(
             toolDecorator = injectedToolDecorator,
             inspectors = interaction.inspectors,
             transformers = interaction.transformers,
+            toolCallContext = effectiveContext,
+            toolNotFoundPolicy = interaction.toolNotFoundPolicy,
         )
 
         val initialMessages = buildInitialMessages(promptContributions, messages, schemaFormat)
@@ -228,6 +237,9 @@ open class ToolLoopLlmOperations(
             ToolInjectionStrategy.DEFAULT
         }
 
+        // Merge process-level and interaction-level context (interaction wins on conflict)
+        val effectiveContext = resolveToolCallContext(llmRequestEvent, interaction)
+
         val toolLoop = toolLoopFactory.create(
             llmMessageSender = messageSender,
             objectMapper = objectMapper,
@@ -236,6 +248,8 @@ open class ToolLoopLlmOperations(
             toolDecorator = injectedToolDecorator,
             inspectors = interaction.inspectors,
             transformers = interaction.transformers,
+            toolCallContext = effectiveContext,
+            toolNotFoundPolicy = interaction.toolNotFoundPolicy,
         )
 
         // Build MaybeReturn prompt contribution
@@ -354,6 +368,7 @@ open class ToolLoopLlmOperations(
 
         val injectedToolDecorator = createInjectedToolDecorator(llmRequestEvent, interaction)
         val injectionStrategy = createInjectionStrategy(interaction)
+        val effectiveContext = resolveToolCallContext(llmRequestEvent, interaction)
 
         val toolLoop = toolLoopFactory.create(
             llmMessageSender = messageSender,
@@ -363,6 +378,8 @@ open class ToolLoopLlmOperations(
             toolDecorator = injectedToolDecorator,
             inspectors = interaction.inspectors,
             transformers = interaction.transformers,
+            toolCallContext = effectiveContext,
+            toolNotFoundPolicy = interaction.toolNotFoundPolicy,
         )
 
         val initialMessages = buildInitialMessages(promptContributions, messages, schemaFormat)
@@ -454,6 +471,7 @@ open class ToolLoopLlmOperations(
 
             val injectedToolDecorator = createInjectedToolDecorator(llmRequestEvent, interaction)
             val injectionStrategy = createInjectionStrategy(interaction)
+            val effectiveContext = resolveToolCallContext(llmRequestEvent, interaction)
 
             val toolLoop = toolLoopFactory.create(
                 llmMessageSender = messageSender,
@@ -463,6 +481,7 @@ open class ToolLoopLlmOperations(
                 toolDecorator = injectedToolDecorator,
                 inspectors = interaction.inspectors,
                 transformers = interaction.transformers,
+                toolCallContext = effectiveContext,
             )
 
             // Build MaybeReturn prompt contribution
@@ -694,6 +713,24 @@ open class ToolLoopLlmOperations(
             )
             it.agentProcess.recordLlmInvocation(llmi)
         }
+    }
+
+    /**
+     * Resolve the effective [ToolCallContext] by merging process-level context
+     * (from [ProcessOptions]) with interaction-level context.
+     * Interaction-level values win on conflict.
+     */
+    private fun resolveToolCallContext(
+        llmRequestEvent: LlmRequestEvent<*>?,
+        interaction: LlmInteraction,
+    ): ToolCallContext {
+        val processContext = llmRequestEvent
+            ?.agentProcess
+            ?.processContext
+            ?.processOptions
+            ?.toolCallContext
+            ?: ToolCallContext.EMPTY
+        return processContext.merge(interaction.toolCallContext)
     }
 
     /**

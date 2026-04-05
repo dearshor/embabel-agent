@@ -18,12 +18,14 @@ package com.embabel.agent.core.support
 import com.embabel.agent.api.common.ContextualPromptElement
 import com.embabel.agent.api.common.InteractionId
 import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.ToolCallContext
+import com.embabel.agent.api.tool.callback.ToolLoopInspector
+import com.embabel.agent.api.tool.callback.ToolLoopTransformer
 import com.embabel.agent.core.ToolConsumer
 import com.embabel.agent.core.ToolGroupConsumer
 import com.embabel.agent.core.ToolGroupRequirement
 import com.embabel.agent.spi.loop.ToolInjectionStrategy
-import com.embabel.agent.api.tool.callback.ToolLoopInspector
-import com.embabel.agent.api.tool.callback.ToolLoopTransformer
+import com.embabel.agent.spi.loop.ToolNotFoundPolicy
 import com.embabel.common.ai.model.LlmOptions
 import com.embabel.common.ai.prompt.PromptContributor
 import com.embabel.common.ai.prompt.PromptContributorConsumer
@@ -110,9 +112,6 @@ private data class LlmCallImpl(
  * @param llm LLM options to use, specifying model and hyperparameters
  * @param tools Tools to use for this interaction
  * @param promptContributors Prompt contributors to use for this interaction
- * @param useEmbabelToolLoop If true, use Embabel's own tool loop instead of Spring AI's.
- * This enables dynamic tool injection and gives full control over the tool execution loop.
- * Default is true.
  * @param maxToolIterations Maximum number of tool loop iterations (default 20)
  */
 data class LlmInteraction(
@@ -125,12 +124,13 @@ data class LlmInteraction(
     override val generateExamples: Boolean? = null,
     override val fieldFilter: Predicate<Field> = Predicate { true },
     override val validation: Boolean = true,
-    val useEmbabelToolLoop: Boolean = true,
     val maxToolIterations: Int = 20,
     val guardRails: List<com.embabel.agent.api.validation.guardrails.GuardRail> = emptyList(),
     val additionalInjectionStrategies: List<ToolInjectionStrategy> = emptyList(),
     val inspectors: List<ToolLoopInspector> = emptyList(),
     val transformers: List<ToolLoopTransformer> = emptyList(),
+    val toolCallContext: ToolCallContext = ToolCallContext.EMPTY,
+    val toolNotFoundPolicy: ToolNotFoundPolicy? = null,
 ) : LlmCall {
 
     override val name: String = id.value

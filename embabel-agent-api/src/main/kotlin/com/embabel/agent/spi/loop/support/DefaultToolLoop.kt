@@ -15,11 +15,19 @@
  */
 package com.embabel.agent.spi.loop.support
 
+import com.embabel.agent.api.common.TerminationScope
+import com.embabel.agent.api.tool.TerminateActionException
+import com.embabel.agent.core.support.AbstractAgentProcess
 import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.ToolCallContext
 import com.embabel.agent.api.tool.ToolControlFlowSignal
+import com.embabel.agent.api.tool.callback.ToolLoopInspector
+import com.embabel.agent.api.tool.callback.ToolLoopTransformer
+import com.embabel.agent.core.AgentProcess
 import com.embabel.agent.core.BlackboardUpdater
 import com.embabel.agent.core.ReplanRequestedException
 import com.embabel.agent.core.Usage
+import com.embabel.agent.spi.loop.AutoCorrectionPolicy
 import com.embabel.agent.spi.loop.LlmMessageSender
 import com.embabel.agent.spi.loop.MaxIterationsExceededException
 import com.embabel.agent.spi.loop.ToolCallResult
@@ -27,12 +35,11 @@ import com.embabel.agent.spi.loop.ToolInjectionContext
 import com.embabel.agent.spi.loop.ToolInjectionStrategy
 import com.embabel.agent.spi.loop.ToolLoop
 import com.embabel.agent.spi.loop.ToolLoopResult
-import com.embabel.agent.spi.loop.ToolNotFoundException
+import com.embabel.agent.spi.loop.ToolNotFoundAction
+import com.embabel.agent.spi.loop.ToolNotFoundPolicy
 import com.embabel.chat.AssistantMessageWithToolCalls
 import com.embabel.chat.Message
 import com.embabel.chat.ToolCall
-import com.embabel.agent.api.tool.callback.ToolLoopInspector
-import com.embabel.agent.api.tool.callback.ToolLoopTransformer
 import com.embabel.chat.ToolResultMessage
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
@@ -58,6 +65,8 @@ internal open class DefaultToolLoop(
     private val toolDecorator: ((Tool) -> Tool)? = null,
     protected val inspectors: List<ToolLoopInspector> = emptyList(),
     protected val transformers: List<ToolLoopTransformer> = emptyList(),
+    private val toolCallContext: ToolCallContext = ToolCallContext.EMPTY,
+    protected val toolNotFoundPolicy: ToolNotFoundPolicy = AutoCorrectionPolicy(),
 ) : ToolLoop {
 
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -96,7 +105,7 @@ internal open class DefaultToolLoop(
 
             val callResult = llmMessageSender.call(state.conversationHistory, state.availableTools)
             accumulateUsage(callResult.usage, state)
-9
+
             /* -------------------------------------------------
              * Apply afterLlmCall callbacks - START
              * ------------------------------------------------- */
@@ -223,10 +232,28 @@ internal open class DefaultToolLoop(
         state: LoopState,
     ): Boolean {
         for (toolCall in toolCalls) {
+            checkForActionTerminationSignal()
             val shouldContinue = processToolCall(toolCall, state)
             if (!shouldContinue) return false
         }
+        // Check for signal set by last tool or its transformers
+        checkForActionTerminationSignal()
         return true
+    }
+
+    /**
+     * Check for graceful action termination signal.
+     * Converts graceful signal to immediate termination via exception.
+     * Clears the signal before throwing to allow action retry.
+     */
+    protected fun checkForActionTerminationSignal() {
+        val process = AgentProcess.get() as? AbstractAgentProcess ?: return
+        val signal = process.terminationRequest
+        if (signal != null && signal.scope == TerminationScope.ACTION) {
+            logger.info("Action termination signal detected: {}", signal.reason)
+            process.resetTerminationRequest()
+            throw TerminateActionException(signal.reason)
+        }
     }
 
     /**
@@ -237,7 +264,9 @@ internal open class DefaultToolLoop(
         state: LoopState,
     ): Boolean {
         val tool = findTool(state.availableTools, toolCall.name)
-            ?: throw ToolNotFoundException(toolCall.name, state.availableTools.map { it.definition.name })
+            ?: return applyToolNotFoundPolicy(toolCall, state)
+
+        toolNotFoundPolicy.onToolFound()
 
         return try {
             val (result, resultContent) = executeToolCall(tool, toolCall)
@@ -264,7 +293,7 @@ internal open class DefaultToolLoop(
         toolCall: ToolCall,
     ): Pair<Tool.Result, String> {
         logger.debug("Executing tool: {} with input: {}", toolCall.name, toolCall.arguments)
-        val result = tool.call(toolCall.arguments)
+        val result = tool.call(toolCall.arguments, toolCallContext)
         val content = when (result) {
             is Tool.Result.Text -> result.content
             is Tool.Result.WithArtifact -> result.content
@@ -390,6 +419,23 @@ internal open class DefaultToolLoop(
      */
     protected fun findTool(tools: List<Tool>, name: String): Tool? {
         return tools.find { it.definition.name == name }
+    }
+
+    private fun applyToolNotFoundPolicy(toolCall: ToolCall, state: LoopState): Boolean {
+        return when (val action = toolNotFoundPolicy.handle(toolCall.name, state.availableTools)) {
+            is ToolNotFoundAction.Throw -> throw action.exception
+            is ToolNotFoundAction.FeedbackToModel -> {
+                logger.warn(action.message)
+                state.conversationHistory.add(
+                    ToolResultMessage(
+                        toolCallId = toolCall.id,
+                        toolName = toolCall.name,
+                        content = action.message,
+                    )
+                )
+                true
+            }
+        }
     }
 
     /**

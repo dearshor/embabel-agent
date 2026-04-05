@@ -23,14 +23,14 @@ import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.core.AgentProcess
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import org.slf4j.Logger
-import org.slf4j.LoggerFactory
-import org.springframework.beans.BeanUtils
-import org.springframework.core.KotlinDetector
 import kotlin.reflect.full.createInstance
 import kotlin.reflect.full.findAnnotation
 import kotlin.reflect.full.functions
 import kotlin.reflect.full.hasAnnotation
+import org.slf4j.Logger
+import org.slf4j.LoggerFactory
+import org.springframework.beans.BeanUtils
+import org.springframework.core.KotlinDetector
 
 /**
  * A [ProgressiveTool] with a fixed set of inner tools that are revealed
@@ -86,23 +86,18 @@ interface UnfoldingTool : ProgressiveTool {
     /**
      * Whether to remove this tool after invocation.
      *
-     * When `true` (default), the facade is replaced by its contents.
-     * When `false`, the facade remains available for re-invocation
-     * (useful for category-based selection with different arguments).
+     * @deprecated Always replaced by a guide tool after first invocation.
+     * The guide lists available sub-tools if the LLM calls the parent again,
+     * preventing ToolNotFoundException loops. This property is ignored.
      */
+    @Deprecated("Always replaced by guide tool after invocation. This property is ignored.")
     val removeOnInvoke: Boolean get() = true
 
     /**
-     * Whether to include a context tool when this tool is unfolded.
-     *
-     * When `true` (default), a `{name}_context` tool is created that preserves
-     * the parent's description and lists available child tools.
-     * When `false`, no context tool is created — useful when the parent's
-     * [call] response and [childToolUsageNotes] provide sufficient guidance,
-     * or when the context tool confuses the LLM into calling it repeatedly
-     * instead of the actual child tools.
+     * @deprecated The guide tool replaces the context tool. This property is ignored.
      */
-    val includeContextTool: Boolean get() = true
+    @Deprecated("Guide tool replaces context tool. This property is ignored.", level = DeprecationLevel.HIDDEN)
+    val includeContextTool: Boolean get() = false
 
     /**
      * Select which inner tools to expose based on invocation input.
@@ -176,6 +171,7 @@ interface UnfoldingTool : ProgressiveTool {
          * @param removeOnInvoke Whether to remove this tool after invocation (default true)
          * @param childToolUsageNotes Optional notes to guide LLM on using the child tools
          */
+        @Suppress("DEPRECATION")
         open fun of(
             name: String,
             description: String,
@@ -715,9 +711,10 @@ interface UnfoldingTool : ProgressiveTool {
 
     companion object : Factory() {
 
-        // Full-param overrides (all parameters required from Java)
+        // Full-param overrides for Java callers (all parameters required)
 
         @JvmStatic
+        @Suppress("DEPRECATION")
         override fun of(
             name: String,
             description: String,
@@ -728,6 +725,7 @@ interface UnfoldingTool : ProgressiveTool {
         ): UnfoldingTool = super.of(name, description, innerTools, removeOnInvoke, childToolUsageNotes, includeContextTool)
 
         @JvmStatic
+        @Suppress("DEPRECATION")
         override fun byCategory(
             name: String,
             description: String,
@@ -763,6 +761,7 @@ interface UnfoldingTool : ProgressiveTool {
         // Short-param convenience overloads for Java callers
 
         @JvmStatic
+        @Suppress("DEPRECATION")
         fun of(
             name: String,
             description: String,
@@ -779,6 +778,7 @@ interface UnfoldingTool : ProgressiveTool {
         ): UnfoldingTool = super.of(name, description, innerTools, removeOnInvoke, childToolUsageNotes, true)
 
         @JvmStatic
+        @Suppress("DEPRECATION")
         fun byCategory(
             name: String,
             description: String,
@@ -806,6 +806,7 @@ interface UnfoldingTool : ProgressiveTool {
  * Simple implementation that exposes all inner tools.
  * Implements MatryoshkaTool for backward compatibility.
  */
+@Suppress("DEPRECATION")
 internal class SimpleUnfoldingTool(
     override val definition: Tool.Definition,
     override val innerTools: List<Tool>,
@@ -815,6 +816,12 @@ internal class SimpleUnfoldingTool(
 ) : MatryoshkaTool {
 
     override fun call(input: String): Tool.Result {
+        // Check if the LLM tried to shortcut the two-step unfolding pattern by passing
+        // inner tool arguments directly (e.g. tasks({"create_task": {...}}) instead of
+        // tasks({}) then create_task({...})). If so, dispatch to the inner tool immediately.
+        val shortcutResult = tryShortcutDispatch(input, innerTools)
+        if (shortcutResult != null) return shortcutResult
+
         val toolNames = innerTools.map { it.definition.name }
         return Tool.Result.text(
             "Enabled ${innerTools.size} tools: ${toolNames.joinToString(", ")}"
@@ -826,6 +833,7 @@ internal class SimpleUnfoldingTool(
  * Implementation with custom tool selection logic.
  * Implements MatryoshkaTool for backward compatibility.
  */
+@Suppress("DEPRECATION")
 internal class SelectableUnfoldingTool(
     override val definition: Tool.Definition,
     override val innerTools: List<Tool>,
@@ -838,12 +846,54 @@ internal class SelectableUnfoldingTool(
     override fun selectTools(input: String): List<Tool> = selector(input)
 
     override fun call(input: String): Tool.Result {
+        val shortcutResult = tryShortcutDispatch(input, innerTools)
+        if (shortcutResult != null) return shortcutResult
+
         val selected = selectTools(input)
         val toolNames = selected.map { it.definition.name }
         return Tool.Result.text(
             "Enabled ${selected.size} tools: ${toolNames.joinToString(", ")}"
         )
     }
+}
+
+private val shortcutLogger: Logger = LoggerFactory.getLogger("com.embabel.agent.api.tool.progressive.UnfoldingShortcut")
+private val shortcutMapper = jacksonObjectMapper()
+
+/**
+ * Detects when an LLM tries to shortcut the two-step unfolding pattern by passing
+ * inner tool arguments directly in the outer tool call.
+ *
+ * For example, if the LLM calls `tasks({"create_task": {"name": "foo", ...}})`,
+ * this detects that `create_task` is an inner tool name and dispatches to it
+ * with the nested arguments, rather than ignoring the payload.
+ *
+ * Returns null if no shortcut was detected (normal unfolding path).
+ */
+internal fun tryShortcutDispatch(input: String, innerTools: List<Tool>): Tool.Result? {
+    if (input.isBlank() || input == "{}") return null
+    val parsed = try { shortcutMapper.readTree(input) } catch (_: Exception) { return null }
+    if (!parsed.isObject) return null
+
+    val innerToolsByName = innerTools.associateBy { it.definition.name }
+    for (fieldName in parsed.fieldNames()) {
+        val innerTool = innerToolsByName[fieldName]
+        if (innerTool != null) {
+            val nestedArgs = parsed.get(fieldName)
+            val argsString = if (nestedArgs.isObject || nestedArgs.isArray) {
+                nestedArgs.toString()
+            } else {
+                // Scalar value — wrap as the tool might expect
+                nestedArgs.toString()
+            }
+            shortcutLogger.info(
+                "Shortcut dispatch: LLM passed '{}' arguments to outer tool — forwarding to inner tool",
+                fieldName,
+            )
+            return innerTool.call(argsString)
+        }
+    }
+    return null
 }
 
 /**

@@ -376,6 +376,30 @@ class GoogleGenAiModelLoaderTest {
     }
 
     @Test
+    fun `should load all 9 expected Google GenAI models`() {
+
+        // Arrange
+        val loader = GoogleGenAiModelLoader()
+
+        // Act
+        val result = loader.loadAutoConfigMetadata()
+
+        // Assert
+        assertEquals(9, result.models.size, "Should load exactly 9 Google GenAI models")
+
+        val expectedModels = listOf(
+            "gemini_3_1_pro_preview", "gemini_3_1_pro_preview_customtools",
+            "gemini_3_flash_preview", "gemini_3_1_flash_lite_preview", "gemini_25_pro", "gemini_25_flash",
+            "gemini_25_flash_lite", "gemini_20_flash", "gemini_20_flash_lite"
+        )
+
+        expectedModels.forEach { expectedName ->
+            assertTrue(result.models.any { it.name == expectedName },
+                "Should have model: $expectedName")
+        }
+    }
+
+    @Test
     fun `should load Gemini 3_1 Pro preview model`() {
         // Arrange
         val loader = GoogleGenAiModelLoader()
@@ -388,6 +412,21 @@ class GoogleGenAiModelLoaderTest {
         assertNotNull(gemini31ProPreview, "Gemini 3.1 Pro preview should be loaded")
         assertEquals("gemini_3_1_pro_preview", gemini31ProPreview?.name)
         assertEquals("gemini-3.1-pro-preview", gemini31ProPreview?.modelId)
+    }
+
+    @Test
+    fun `should load Gemini 3_1 Pro preview customtools model`() {
+        // Arrange
+        val loader = GoogleGenAiModelLoader()
+
+        // Act
+        val result = loader.loadAutoConfigMetadata()
+
+        // Assert - verify Gemini 3.1 Pro preview customtools is present
+        val model = result.models.find { it.modelId == "gemini-3.1-pro-preview-customtools" }
+        assertNotNull(model, "Gemini 3.1 Pro preview customtools should be loaded")
+        assertEquals("gemini_3_1_pro_preview_customtools", model?.name)
+        assertEquals("gemini-3.1-pro-preview-customtools", model?.modelId)
     }
 
     /**
@@ -407,6 +446,21 @@ class GoogleGenAiModelLoaderTest {
         assertNotNull(gemini3FlashPreview, "Gemini 3 Flash preview should be loaded")
         assertEquals("gemini_3_flash_preview", gemini3FlashPreview?.name)
         assertEquals("gemini-3-flash-preview", gemini3FlashPreview?.modelId)
+    }
+
+    @Test
+    fun `should load Gemini 3_1 Flash Lite preview model`() {
+        // Arrange
+        val loader = GoogleGenAiModelLoader()
+
+        // Act
+        val result = loader.loadAutoConfigMetadata()
+
+        // Assert - verify Gemini 3.1 Flash Lite preview is present
+        val gemini31FlashLitePreview = result.models.find { it.modelId == "gemini-3.1-flash-lite-preview" }
+        assertNotNull(gemini31FlashLitePreview, "Gemini 3.1 Flash Lite preview should be loaded")
+        assertEquals("gemini_3_1_flash_lite_preview", gemini31FlashLitePreview?.name)
+        assertEquals("gemini-3.1-flash-lite-preview", gemini31FlashLitePreview?.modelId)
     }
 
     @Test

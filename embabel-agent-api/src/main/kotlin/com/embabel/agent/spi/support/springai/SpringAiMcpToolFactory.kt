@@ -29,6 +29,7 @@ class SpringAiMcpToolFactory(
 
     private val logger = loggerFor<SpringAiMcpToolFactory>()
 
+    @Suppress("DEPRECATION")
     override fun unfolding(
         name: String,
         description: String,
@@ -46,7 +47,6 @@ class SpringAiMcpToolFactory(
             name = name,
             description = description,
             innerTools = innerTools,
-            removeOnInvoke = removeOnInvoke,
         )
     }
 

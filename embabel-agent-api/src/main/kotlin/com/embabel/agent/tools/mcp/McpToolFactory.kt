@@ -68,17 +68,17 @@ interface McpToolFactory {
      * @param name Name of the UnfoldingTool facade
      * @param description Description explaining when to use this tool category
      * @param filter Predicate that returns true to include a tool
-     * @param removeOnInvoke Whether to remove the facade after invocation
+     * @param removeOnInvoke Deprecated — ignored. Always replaced by guide tool.
      */
     fun unfolding(
         name: String,
         description: String,
         filter: (ToolCallback) -> Boolean,
-        removeOnInvoke: Boolean,
+        @Suppress("DEPRECATION") removeOnInvoke: Boolean,
     ): UnfoldingTool
 
     /**
-     * Create an UnfoldingTool from MCP clients with a filter predicate, with removeOnInvoke=true.
+     * Create an UnfoldingTool from MCP clients with a filter predicate.
      */
     fun unfolding(
         name: String,

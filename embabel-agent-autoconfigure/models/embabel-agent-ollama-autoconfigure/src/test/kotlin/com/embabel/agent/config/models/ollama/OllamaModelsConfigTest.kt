@@ -39,6 +39,9 @@ class OllamaModelsConfigTest {
     private val mockProperties = mockk<ConfigurableModelProviderProperties>()
     private val mockObservationRegistry = mockk<ObjectProvider<ObservationRegistry>>()
     private val mockRestClient = mockk<RestClient>()
+    private val mockRestClientBuilder = mockk<RestClient.Builder>()
+    private val mockClonedBuilder = mockk<RestClient.Builder>(relaxed = true)
+    private val mockRestClientBuilderProvider = mockk<ObjectProvider<RestClient.Builder>>()
     private val mockRequestHeadersUriSpec = mockk<RestClient.RequestHeadersUriSpec<*>>()
     private val mockRequestHeadersSpec = mockk<RestClient.RequestHeadersSpec<*>>()
     private val mockResponseSpec = mockk<RestClient.ResponseSpec>()
@@ -74,9 +77,11 @@ class OllamaModelsConfigTest {
         every { mockProperties.allWellKnownEmbeddingServiceNames() } returns setOf("embeddinggemma:latest")
         every { mockObservationRegistry.getIfUnique(any()) } returns ObservationRegistry.NOOP
 
-        // Mock RestClient.create() static method - use more specific mocking
-        mockkStatic("org.springframework.web.client.RestClient")
-        every { RestClient.create() } returns mockRestClient
+        // Mock RestClient.Builder provider chain
+        every { mockRestClientBuilder.observationRegistry(any()) } returns mockRestClientBuilder
+        every { mockRestClientBuilder.clone() } returns mockClonedBuilder
+        every { mockRestClientBuilder.build() } returns mockRestClient
+        every { mockRestClientBuilderProvider.getIfAvailable(any<java.util.function.Supplier<RestClient.Builder>>()) } returns mockRestClientBuilder
 
         // Setup standard RestClient call chain
         every { mockRestClient.get() } returns mockRequestHeadersUriSpec
@@ -105,7 +110,6 @@ class OllamaModelsConfigTest {
 
         // Then - Verify that actual calls occurred during config.registerModels()
         // Verify HTTP discovery happened
-        verify { RestClient.create() }
         verify { mockRestClient.get() }
         verify { mockResponseSpec.body(any<ParameterizedTypeReference<Any>>()) }
 
@@ -365,6 +369,35 @@ class OllamaModelsConfigTest {
         verify(exactly = 0) { mockBeanFactory.registerSingleton(any(), any()) }
     }
 
+    @Test
+    fun `should work with primary namespace baseUrl`() {
+        // Given - primary namespace is set (simulates embabel.agent.platform.models.ollama.base-url)
+        val config = createConfig("http://primary:11434", null)
+
+        // When
+        config.ollamaModelsInitializer()
+
+        // Then - should use the provided baseUrl
+        verify { mockRestClient.get() }
+        verify { mockRequestHeadersUriSpec.uri("http://primary:11434/api/tags") }
+    }
+
+    @Test
+    fun `should work with legacy namespace baseUrl as fallback`() {
+        // Given - legacy namespace is set (simulates spring.ai.ollama.base-url fallback)
+        // Note: The SpEL fallback ${new:${legacy:}} is resolved by Spring at injection time.
+        // This test verifies the config works correctly with any baseUrl value,
+        // which covers both primary and fallback scenarios.
+        val config = createConfig("http://legacy:11434", null)
+
+        // When
+        config.ollamaModelsInitializer()
+
+        // Then - should use the provided baseUrl (legacy in this case)
+        verify { mockRestClient.get() }
+        verify { mockRequestHeadersUriSpec.uri("http://legacy:11434/api/tags") }
+    }
+
     // Helper methods
     private fun createConfig(baseUrl: String, nodeProperties: OllamaNodeProperties?) =
         OllamaModelsConfig(
@@ -372,6 +405,7 @@ class OllamaModelsConfigTest {
             nodeProperties = nodeProperties,
             configurableBeanFactory = mockBeanFactory,
             properties = mockProperties,
-            observationRegistry = mockObservationRegistry
+            observationRegistry = mockObservationRegistry,
+            restClientBuilder = mockRestClientBuilderProvider,
         )
 }

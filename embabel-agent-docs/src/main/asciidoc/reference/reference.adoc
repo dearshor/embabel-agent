@@ -33,11 +33,15 @@ include::llms/page.adoc[]
 
 include::bedrock/page.adoc[]
 
+include::minimax/page.adoc[]
+
 include::streaming/page.adoc[]
 
 include::thinking/page.adoc[]
 
 include::guardrails/page.adoc[]
+
+include::termination/page.adoc[]
 
 include::customizing/page.adoc[]
 
@@ -53,4 +57,6 @@ include::troubleshooting/page.adoc[]
 include::migrating/page.adoc[]
 
 include::api-evolution/page.adoc[]
+
+include::asynch-mode/page.adoc[]
 

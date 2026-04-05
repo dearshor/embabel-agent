@@ -17,12 +17,14 @@ package com.embabel.agent.spi.loop
 
 import com.embabel.agent.api.common.Asyncer
 import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.ToolCallContext
+import com.embabel.agent.api.tool.callback.ToolLoopInspector
+import com.embabel.agent.api.tool.callback.ToolLoopTransformer
 import com.embabel.agent.api.tool.config.ToolLoopConfiguration
 import com.embabel.agent.api.tool.config.ToolLoopConfiguration.ToolLoopType
 import com.embabel.agent.spi.loop.support.DefaultToolLoop
 import com.embabel.agent.spi.loop.support.ParallelToolLoop
-import com.embabel.agent.api.tool.callback.ToolLoopInspector
-import com.embabel.agent.api.tool.callback.ToolLoopTransformer
+
 import com.fasterxml.jackson.databind.ObjectMapper
 
 /**
@@ -40,7 +42,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
  *
  * @see Asyncer
  */
-fun interface ToolLoopFactory {
+interface ToolLoopFactory {
 
     /**
      * Create a [ToolLoop] instance.
@@ -52,6 +54,7 @@ fun interface ToolLoopFactory {
      * @param toolDecorator optional decorator for injected tools
      * @param inspectors read-only observers for tool loop lifecycle events
      * @param transformers transformers for modifying conversation history or tool results
+     * @param toolCallContext context propagated to tool invocations
      */
     fun create(
         llmMessageSender: LlmMessageSender,
@@ -61,6 +64,8 @@ fun interface ToolLoopFactory {
         toolDecorator: ((Tool) -> Tool)?,
         inspectors: List<ToolLoopInspector>,
         transformers: List<ToolLoopTransformer>,
+        toolCallContext: ToolCallContext,
+        toolNotFoundPolicy: ToolNotFoundPolicy? = null,
     ): ToolLoop
 
     companion object {
@@ -70,8 +75,12 @@ fun interface ToolLoopFactory {
          * @param config the tool loop configuration
          * @param asyncer asyncer for parallel mode with context propagation
          */
-        fun create(config: ToolLoopConfiguration, asyncer: Asyncer): ToolLoopFactory =
-            ConfigurableToolLoopFactory(config, asyncer)
+        fun create(
+            config: ToolLoopConfiguration,
+            asyncer: Asyncer,
+            defaultToolNotFoundPolicy: ToolNotFoundPolicy,
+        ): ToolLoopFactory =
+            ConfigurableToolLoopFactory(config, asyncer, defaultToolNotFoundPolicy)
     }
 }
 
@@ -84,6 +93,7 @@ fun interface ToolLoopFactory {
 internal class ConfigurableToolLoopFactory(
     private val config: ToolLoopConfiguration,
     private val asyncer: Asyncer,
+    private val defaultToolNotFoundPolicy: ToolNotFoundPolicy,
 ) : ToolLoopFactory {
 
     override fun create(
@@ -94,26 +104,35 @@ internal class ConfigurableToolLoopFactory(
         toolDecorator: ((Tool) -> Tool)?,
         inspectors: List<ToolLoopInspector>,
         transformers: List<ToolLoopTransformer>,
-    ): ToolLoop = when (config.type) {
-        ToolLoopType.DEFAULT -> DefaultToolLoop(
-            llmMessageSender = llmMessageSender,
-            objectMapper = objectMapper,
-            injectionStrategy = injectionStrategy,
-            maxIterations = maxIterations,
-            toolDecorator = toolDecorator,
-            inspectors = inspectors,
-            transformers = transformers,
-        )
-        ToolLoopType.PARALLEL -> ParallelToolLoop(
-            llmMessageSender = llmMessageSender,
-            objectMapper = objectMapper,
-            injectionStrategy = injectionStrategy,
-            maxIterations = maxIterations,
-            toolDecorator = toolDecorator,
-            inspectors = inspectors,
-            transformers = transformers,
-            asyncer = asyncer,
-            parallelConfig = config.parallel,
-        )
+        toolCallContext: ToolCallContext,
+        toolNotFoundPolicy: ToolNotFoundPolicy?,
+    ): ToolLoop {
+        val policy = toolNotFoundPolicy ?: defaultToolNotFoundPolicy
+        return when (config.type) {
+            ToolLoopType.DEFAULT -> DefaultToolLoop(
+                llmMessageSender = llmMessageSender,
+                objectMapper = objectMapper,
+                injectionStrategy = injectionStrategy,
+                maxIterations = maxIterations,
+                toolDecorator = toolDecorator,
+                inspectors = inspectors,
+                transformers = transformers,
+                toolCallContext = toolCallContext,
+                toolNotFoundPolicy = policy,
+            )
+            ToolLoopType.PARALLEL -> ParallelToolLoop(
+                llmMessageSender = llmMessageSender,
+                objectMapper = objectMapper,
+                injectionStrategy = injectionStrategy,
+                maxIterations = maxIterations,
+                toolDecorator = toolDecorator,
+                inspectors = inspectors,
+                transformers = transformers,
+                asyncer = asyncer,
+                parallelConfig = config.parallel,
+                toolCallContext = toolCallContext,
+                toolNotFoundPolicy = policy,
+            )
+        }
     }
 }

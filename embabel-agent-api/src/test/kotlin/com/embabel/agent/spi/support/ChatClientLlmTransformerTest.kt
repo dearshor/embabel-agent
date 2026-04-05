@@ -25,6 +25,7 @@ import com.embabel.agent.core.AgentProcess
 import com.embabel.agent.core.LlmInvocation
 import com.embabel.agent.core.LlmInvocationHistory
 import com.embabel.agent.core.ProcessContext
+import com.embabel.agent.core.ProcessOptions
 import com.embabel.agent.core.support.LlmInteraction
 import com.embabel.agent.spi.support.springai.ChatClientLlmOperations
 import com.embabel.agent.spi.support.MaybeReturn
@@ -158,6 +159,7 @@ class ChatClientLlmTransformerTest {
             val mockProcessContext = mockk<ProcessContext>()
             every { mockProcessContext.onProcessEvent(any()) } answers { eventListener.onProcessEvent(firstArg()) }
             every { mockProcessContext.platformServices } returns mockPlatformServices
+            every { mockProcessContext.processOptions } returns ProcessOptions()
             every { mockProcessContext.agentProcess } returns mockAgentProcess
             every { mockAgentProcess.processContext } returns mockProcessContext
 
@@ -217,7 +219,7 @@ class ChatClientLlmTransformerTest {
             }
 
             @Test
-            fun `events emitted with tool loop`() {
+            fun `events emitted`() {
                 val ese = EventSavingAgenticEventListener()
                 val person = SpiPerson("John")
                 val result = runWithPromptReturning(
@@ -228,30 +230,10 @@ class ChatClientLlmTransformerTest {
                     ),
                     eventListener = ese,
                     outputClass = SpiPerson::class.java,
-                    useEmbabelToolLoop = true,
                 )
                 assertEquals(Result.success(person), result.result)
-                // Tool loop path emits: LlmRequestEvent, ToolLoopStartEvent, ToolLoopCompletedEvent, LlmMaybeResponseEvent + ChatModelCallEvent
+                // Embabel tool loop emits: LlmRequestEvent, ToolLoopStartEvent, ToolLoopCompletedEvent, LlmMaybeResponseEvent + ChatModelCallEvent
                 assertEquals(5, ese.processEvents.size)
-            }
-
-            @Test
-            fun `events emitted with legacy Spring AI`() {
-                val ese = EventSavingAgenticEventListener()
-                val person = SpiPerson("John")
-                val result = runWithPromptReturning(
-                    llmReturn = jacksonObjectMapper().writeValueAsString(
-                        MaybeReturn(
-                            person
-                        )
-                    ),
-                    eventListener = ese,
-                    outputClass = SpiPerson::class.java,
-                    useEmbabelToolLoop = false,
-                )
-                assertEquals(Result.success(person), result.result)
-                // Spring AI path emits: LlmRequestEvent, LlmMaybeResponseEvent + ChatModelCallEvent
-                assertEquals(3, ese.processEvents.size)
             }
 
             @Test
@@ -345,7 +327,6 @@ class ChatClientLlmTransformerTest {
             llmReturn: String,
             eventListener: AgenticEventListener = EventSavingAgenticEventListener(),
             outputClass: Class<*>,
-            useEmbabelToolLoop: Boolean = true,
         ): Return {
             val mockPlatformServices = mockk<PlatformServices>()
             every { mockPlatformServices.eventListener } returns eventListener
@@ -360,6 +341,7 @@ class ChatClientLlmTransformerTest {
             val mockProcessContext = mockk<ProcessContext>()
             every { mockProcessContext.onProcessEvent(any()) } answers { eventListener.onProcessEvent(firstArg()) }
             every { mockProcessContext.platformServices } returns mockPlatformServices
+            every { mockProcessContext.processOptions } returns ProcessOptions()
             every { mockProcessContext.agentProcess } returns mockAgentProcess
             every { mockAgentProcess.processContext } returns mockProcessContext
             every { mockAgentProcess.recordLlmInvocation(any()) } answers {
@@ -396,7 +378,7 @@ class ChatClientLlmTransformerTest {
                 )
             val result = transformer.createObjectIfPossible(
                 messages = listOf(UserMessage("Say hello")),
-                interaction = LlmInteraction(id = InteractionId("test"), useEmbabelToolLoop = useEmbabelToolLoop),
+                interaction = LlmInteraction(id = InteractionId("test")),
                 agentProcess = mockAgentProcess,
                 action = null,
                 outputClass = outputClass,

@@ -22,8 +22,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
-import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.ReactorClientHttpRequestFactory;
+import org.springframework.web.client.RestClient;
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
@@ -45,16 +45,17 @@ record NettyClientFactoryProperties(
 @AutoConfigureBefore(name = "com.embabel.agent.autoconfigure.platform.AgentPlatformAutoConfiguration")
 public class NettyClientAutoConfiguration {
 
-    @Bean("aiModelHttpRequestFactory")
+    @Bean("aiModelRestClientBuilder")
     @ConditionalOnProperty(value = "embabel.agent.platform.http-client.use-reactor-netty", havingValue = "true", matchIfMissing = true)
-    ClientHttpRequestFactory reactorClientHttpRequestFactory(NettyClientFactoryProperties httpClientProperties) {
-        var httpClient = HttpClient.create().responseTimeout(httpClientProperties
-                        .readTimeout())
+    RestClient.Builder reactorRestClientBuilder(NettyClientFactoryProperties httpClientProperties) {
+        var httpClient = HttpClient.create()
+                .followRedirect(true)
+                .responseTimeout(httpClientProperties.readTimeout())
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, (int) httpClientProperties
                         .connectTimeout()
                         .toMillis());
 
-        return new ReactorClientHttpRequestFactory(httpClient);
+        return RestClient.builder().requestFactory(new ReactorClientHttpRequestFactory(httpClient));
     }
 
 }

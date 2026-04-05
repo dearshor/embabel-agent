@@ -17,7 +17,8 @@ This guide is intended for developers who want to understand the internals of th
 | [embabel-agent-openai](modules/embabel-agent-openai.md) | OpenAI-compatible model utilities |
 | [embabel-agent-rag](modules/embabel-agent-rag.md) | Retrieval-Augmented Generation pipeline |
 | [embabel-agent-code](modules/embabel-agent-code.md) | Coding-agent tools (Git, Maven, Bash, symbol search) |
-| [embabel-agent-mcpserver](modules/embabel-agent-mcpserver.md) | MCP server (SSE) integration |
+| [embabel-agent-mcp](modules/embabel-agent-mcpserver.md) | MCP server (SSE) integration + MCP security (`@SecureAgentTool`) |
+| [embabel-agent-onnx](modules/embabel-agent-onnx.md) | ONNX Runtime local embedding service |
 | [embabel-agent-a2a](modules/embabel-agent-a2a.md) | Google Agent-to-Agent (A2A) protocol |
 | [embabel-agent-observability](modules/embabel-agent-observability.md) | OpenTelemetry tracing and Micrometer metrics |
 
@@ -46,7 +47,10 @@ embabel-agent/
 │   ├── embabel-agent-rag-tika/
 │   └── embabel-agent-rag-neo/
 ├── embabel-agent-code/          # Coding agent tools
-├── embabel-agent-mcpserver/     # MCP server
+├── embabel-agent-mcp/           # MCP server + security
+│   ├── embabel-agent-mcpserver/ #   SSE server implementation
+│   └── embabel-agent-mcp-security/ # @SecureAgentTool enforcement
+├── embabel-agent-onnx/          # ONNX Runtime local embeddings
 ├── embabel-agent-a2a/           # A2A protocol
 └── embabel-agent-observability/ # Tracing & metrics
 ```

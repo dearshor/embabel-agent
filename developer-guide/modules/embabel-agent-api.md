@@ -367,6 +367,66 @@ java -Djava.util.concurrent.ForkJoinPool.common.parallelism=4 -jar agent.jar
 
 ---
 
+## Bring-Your-Own-Key (BYOK)
+
+The `embabel.agent.spi` package contains a clean API for validating a user-supplied API key and detecting which provider it belongs to, without coupling callers to provider-specific error types.
+
+| Type | File | Purpose |
+|---|---|---|
+| `ByokFactory` | `spi/ByokFactory.kt` | Functional interface — validates a key and returns a ready `LlmService` |
+| `InvalidApiKeyException` | `spi/InvalidApiKeyException.kt` | Thrown when key validation fails (provider-agnostic) |
+| `detectProvider()` | `spi/ProviderDetection.kt` | Races multiple `ByokFactory` candidates concurrently; returns the first that succeeds |
+
+Built-in factories:
+- `AnthropicModelFactory(apiKey)` — Anthropic
+- `OpenAiCompatibleModelFactory.openAi(apiKey)` — OpenAI
+- `OpenAiCompatibleModelFactory.deepSeek(apiKey)` — DeepSeek
+- `OpenAiCompatibleModelFactory.mistral(apiKey)` — Mistral AI
+- `OpenAiCompatibleModelFactory.gemini(apiKey)` — Google Gemini
+
+### Fan-out detection (sign-up flow)
+
+```kotlin
+val service = detectProvider(
+    AnthropicModelFactory(apiKey = userKey),
+    OpenAiCompatibleModelFactory.openAi(userKey),
+    OpenAiCompatibleModelFactory.deepSeek(userKey),
+)
+val detectedProvider = service.provider
+```
+
+### Single-provider validation (settings flow)
+
+```kotlin
+val service = detectProvider(AnthropicModelFactory(apiKey = userKey))
+```
+
+`detectProvider` uses virtual threads to race all candidates; the first successful `LlmService` is returned and the rest are cancelled. Throws `InvalidApiKeyException` if all candidates fail.
+
+---
+
+## Action QoS — platform-level defaults
+
+Retry and backoff settings for actions can be set globally via the `embabel.agent.platform.action-qos` configuration prefix. These platform defaults are applied to any action whose `@Action` annotation does not specify explicit QoS — including DSL actions and workflow-builder actions.
+
+Configuration prefix: `embabel.agent.platform.action-qos`
+
+| Property | Description |
+|---|---|
+| `embabel.agent.platform.action-qos.default.max-attempts` | Maximum retry attempts for the default action QoS |
+| `embabel.agent.platform.action-qos.default.backoff-millis` | Initial backoff delay (ms) |
+| `embabel.agent.platform.action-qos.default.backoff-multiplier` | Exponential backoff multiplier |
+| `embabel.agent.platform.action-qos.default.backoff-max-interval` | Maximum backoff interval (ms) |
+| `embabel.agent.platform.action-qos.default.idempotent` | Whether actions are treated as idempotent by default |
+
+Per-action overrides can be set under `embabel.agent.platform.action-qos.actions.<action-name>.*` using the same sub-properties.
+
+**Resolution rule:** An action that already has an explicit `@Action(qos = ...)` configuration is left unchanged. Only actions using the default `ActionQos()` are updated with the platform values.
+
+**Scope:** Platform QoS applies to annotation-based agents, DSL actions, workflow builder actions (`RepeatUntil`, `ScatterGather`, etc.), and child process actions.
+
+---
+
 ## Form generation
 
 `SimpleFormGenerator` generates UI forms from Kotlin data classes. It skips:

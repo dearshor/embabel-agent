@@ -139,6 +139,47 @@ Key classes:
 
 ---
 
+## Remote content ingestion (rag-core)
+
+The `ingestion` package in `rag-core` provides a layered API for fetching and converting remote content before it enters the RAG pipeline.
+
+### `ContentFetcher`
+
+**Package:** `com.embabel.agent.rag.ingestion`
+
+Top-level interface — fetches raw content from a URI and returns a `NavigableDocument`:
+
+```kotlin
+interface ContentFetcher {
+    fun fetch(uri: String): NavigableDocument
+}
+```
+
+### Built-in implementations
+
+| Class | Description |
+|---|---|
+| `HttpContentFetcher` | Fetches an HTTP/HTTPS URL using `RestClient` and delegates to `TikaHierarchicalContentReader` |
+| `RssContentFetcher` | Fetches an RSS/Atom feed and returns each entry as a `NavigableDocument` |
+| `RoutingContentFetcher` | Selects a delegate `ContentFetcher` based on `FetchRoute` rules (scheme, domain pattern, etc.) |
+
+### `FetchRoute`
+
+A routing rule that pairs a URI predicate with a `ContentFetcher`. Used by `RoutingContentFetcher` to dispatch to the correct fetcher:
+
+```kotlin
+val fetcher = RoutingContentFetcher(
+    FetchRoute(predicate = { it.startsWith("https://feeds.") }, fetcher = RssContentFetcher()),
+    FetchRoute(predicate = { true }, fetcher = HttpContentFetcher()),   // default fallback
+)
+```
+
+### `RssArticleContentMapper`
+
+Converts a parsed RSS `SyndEntry` to a `NavigableDocument`. Can be subclassed to apply custom metadata extraction from feed entry fields.
+
+---
+
 ## Tika document parsing (rag-tika)
 
 Parses HTML, Markdown, and plain text files into `NavigableDocument` trees.

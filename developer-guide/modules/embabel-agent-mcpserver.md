@@ -1,6 +1,10 @@
-# embabel-agent-mcpserver
+# embabel-agent-mcp
 
-**Maven artifact:** `com.embabel.agent:embabel-agent-mcpserver`
+**Maven artifacts:**
+- `com.embabel.agent:embabel-agent-mcpserver` — SSE server implementation (now under `embabel-agent-mcp/embabel-agent-mcpserver/`)
+- `com.embabel.agent:embabel-agent-mcp-security` — `@SecureAgentTool` aspect and enforcement
+
+> **Note:** The `embabel-agent-mcpserver` module was relocated to `embabel-agent-mcp/embabel-agent-mcpserver` in the 0.4.0 dev cycle. The Maven artifact id is unchanged; only the directory path moved.
 
 Exposes deployed agents as tools through the Model Context Protocol (MCP) over Server-Sent Events (SSE). This lets external clients such as Claude Desktop, the MCP Inspector, or other agents call Embabel agents as MCP tools.
 

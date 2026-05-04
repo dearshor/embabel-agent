@@ -28,12 +28,15 @@ import com.embabel.common.ai.model.PricingModel
 import com.embabel.common.util.ExcludeFromJacocoGeneratedReport
 import io.micrometer.observation.ObservationRegistry
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.beans.factory.config.ConfigurableBeanFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.web.client.RestClient
+import org.springframework.web.reactive.function.client.WebClient
 
 /**
  * Configuration properties for Gemini models.
@@ -94,13 +97,19 @@ class GeminiModelsConfig(
     private val properties: GeminiProperties,
     private val configurableBeanFactory: ConfigurableBeanFactory,
     private val modelLoader: LlmAutoConfigMetadataLoader<GeminiModelDefinitions> = GeminiModelLoader(),
+    @Qualifier("aiModelRestClientBuilder")
+    restClientBuilder: ObjectProvider<RestClient.Builder>,
+    @Qualifier("aiModelWebClientBuilder")
+    webClientBuilder: ObjectProvider<WebClient.Builder>,
 ) : OpenAiCompatibleModelFactory(
     baseUrl = envBaseUrl ?: properties.baseUrl ?: DEFAULT_BASE_URL,
     apiKey = envApiKey ?: properties.apiKey
     ?: error("Gemini API key required: set GEMINI_API_KEY env var or embabel.agent.platform.models.gemini.api-key"),
     completionsPath = null,
     embeddingsPath = null,
-    observationRegistry = observationRegistry.getIfUnique { ObservationRegistry.NOOP }
+    observationRegistry = observationRegistry.getIfUnique { ObservationRegistry.NOOP },
+    restClientBuilder = restClientBuilder,
+    webClientBuilder = webClientBuilder,
 ) {
 
     init {

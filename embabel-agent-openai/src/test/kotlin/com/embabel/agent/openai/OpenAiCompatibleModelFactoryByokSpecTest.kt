@@ -19,7 +19,7 @@ import com.embabel.agent.api.models.DeepSeekModels
 import com.embabel.agent.api.models.GoogleGenAiModels
 import com.embabel.agent.api.models.MistralAiModels
 import com.embabel.agent.api.models.OpenAiModels
-import com.embabel.agent.spi.ByokFactory
+import com.embabel.common.byok.ByokFactory
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Test
 
@@ -50,7 +50,7 @@ class OpenAiCompatibleModelFactoryByokSpecTest {
         assertInstanceOf(
             ByokFactory::class.java,
             OpenAiCompatibleModelFactory.byok(
-                baseUrl = "https://api.example.com/v1",
+                baseUrl = "https://api.example.com",
                 apiKey = "key",
                 validationModel = "my-model",
                 validationProvider = "MyProvider",

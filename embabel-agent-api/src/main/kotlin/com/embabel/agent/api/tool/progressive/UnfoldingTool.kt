@@ -41,15 +41,30 @@ import org.springframework.core.KotlinDetector
  * - Grouping related tools under a category facade
  * - Progressive disclosure based on LLM intent
  *
+ * ## Progressive disclosure: parent description + childToolUsageNotes
+ *
+ * Information about an UnfoldingTool reaches the LLM in **two stages**:
+ *
+ * 1. **Up front**, the parent tool's `description` is in the catalog. It
+ *    advertises the capability so the LLM can decide whether to descend.
+ *    Keep this short — every loaded UnfoldingTool pays for it on every turn.
+ *
+ * 2. **On invocation**, the unfolded message returned by [call] lists the
+ *    revealed inner tools and then appends [childToolUsageNotes] verbatim.
+ *    Only the LLM that just chose to descend pays for this text. It can
+ *    therefore be as long as needed: workflow guidance, the body of an
+ *    agent skill, "use X for Y, Z for W" routing rules between siblings,
+ *    background context the inner tools need to be used correctly.
+ *
+ * The split is deliberate. Putting the same content in `description` would
+ * tax every turn, even ones that have nothing to do with this tool. Putting
+ * it in `childToolUsageNotes` defers the cost until the LLM has committed.
+ *
  * ## Context Preservation
  *
  * When an UnfoldingTool is expanded, a context tool can be created that
  * preserves the parent's description and optional usage notes. This solves
  * the problem where child tools would lose context about the parent's purpose.
- *
- * The [childToolUsageNotes] field provides additional guidance on how to
- * use the child tools, included only once in the context tool rather than
- * duplicated in each child tool's description.
  *
  * Example:
  * ```kotlin
@@ -71,7 +86,7 @@ interface UnfoldingTool : ProgressiveTool {
      * The inner tools that will be exposed when this tool is invoked.
      * This is a fixed set that does not vary by context.
      */
-    val innerTools: List<Tool>
+    override val innerTools: List<Tool>
 
     /**
      * Returns the fixed [innerTools] regardless of process context.
@@ -79,9 +94,32 @@ interface UnfoldingTool : ProgressiveTool {
     override fun innerTools(process: AgentProcess): List<Tool> = innerTools
 
     /**
-     * Optional usage notes to guide the LLM on when to invoke the child tools.
+     * Detail that is **progressively disclosed**: hidden until the LLM invokes
+     * this tool, then appended verbatim to the unfolded message returned by
+     * [call] (after the "Tools now available: …" preamble).
+     *
+     * Because only the LLM that just descended into this tool pays for it,
+     * `childToolUsageNotes` is the right home for content that would be
+     * wasteful in the parent `description` — workflow guidance, when-to-use
+     * routing between siblings, an agent skill's full body, or any other
+     * detail the LLM needs *only after committing to use this tool*.
+     *
+     * Keep the parent `description` short (it costs every turn);
+     * put long-form context here (it costs only on use).
+     *
+     * Null or blank ⇒ unfolded message is just the preamble.
      */
     val childToolUsageNotes: String? get() = null
+
+    /**
+     * When true, expanding this tool removes ALL other tools from the LLM's
+     * tool set — the LLM will only see the inner tools until the interaction
+     * ends. Use this for tools where the LLM consistently picks the wrong
+     * sibling tool instead of using the inner tools (e.g., personality changes).
+     *
+     * Defaults to false for backward compatibility.
+     */
+    val exclusive: Boolean get() = false
 
     /**
      * Whether to remove this tool after invocation.
@@ -129,6 +167,7 @@ interface UnfoldingTool : ProgressiveTool {
         innerTools = innerTools + tools.toList(),
         removeOnInvoke = removeOnInvoke,
         childToolUsageNotes = childToolUsageNotes,
+        exclusive = exclusive,
     )
 
     /**
@@ -153,6 +192,7 @@ interface UnfoldingTool : ProgressiveTool {
             innerTools = innerTools + additionalTools,
             removeOnInvoke = removeOnInvoke,
             childToolUsageNotes = childToolUsageNotes,
+            exclusive = exclusive,
         )
     }
 
@@ -170,6 +210,7 @@ interface UnfoldingTool : ProgressiveTool {
          * @param innerTools The tools to expose when invoked
          * @param removeOnInvoke Whether to remove this tool after invocation (default true)
          * @param childToolUsageNotes Optional notes to guide LLM on using the child tools
+         * @param exclusive When true, removes ALL other tools on expansion (default false)
          */
         @Suppress("DEPRECATION")
         open fun of(
@@ -178,7 +219,7 @@ interface UnfoldingTool : ProgressiveTool {
             innerTools: List<Tool>,
             removeOnInvoke: Boolean = true,
             childToolUsageNotes: String? = null,
-            includeContextTool: Boolean = true,
+            exclusive: Boolean = false,
         ): UnfoldingTool = SimpleUnfoldingTool(
             definition = Tool.Definition(
                 name = name,
@@ -188,7 +229,7 @@ interface UnfoldingTool : ProgressiveTool {
             innerTools = innerTools,
             removeOnInvoke = removeOnInvoke,
             childToolUsageNotes = childToolUsageNotes,
-            includeContextTool = includeContextTool,
+            exclusive = exclusive,
         )
 
         /**
@@ -721,8 +762,18 @@ interface UnfoldingTool : ProgressiveTool {
             innerTools: List<Tool>,
             removeOnInvoke: Boolean,
             childToolUsageNotes: String?,
-            includeContextTool: Boolean,
-        ): UnfoldingTool = super.of(name, description, innerTools, removeOnInvoke, childToolUsageNotes, includeContextTool)
+            exclusive: Boolean,
+        ): UnfoldingTool = super.of(name, description, innerTools, removeOnInvoke, childToolUsageNotes, exclusive)
+
+        @JvmStatic
+        @Suppress("DEPRECATION")
+        fun of(
+            name: String,
+            description: String,
+            innerTools: List<Tool>,
+            removeOnInvoke: Boolean,
+            childToolUsageNotes: String?,
+        ): UnfoldingTool = super.of(name, description, innerTools, removeOnInvoke, childToolUsageNotes, false)
 
         @JvmStatic
         @Suppress("DEPRECATION")
@@ -766,16 +817,7 @@ interface UnfoldingTool : ProgressiveTool {
             name: String,
             description: String,
             innerTools: List<Tool>,
-        ): UnfoldingTool = super.of(name, description, innerTools, true, null, true)
-
-        @JvmStatic
-        fun of(
-            name: String,
-            description: String,
-            innerTools: List<Tool>,
-            removeOnInvoke: Boolean,
-            childToolUsageNotes: String?,
-        ): UnfoldingTool = super.of(name, description, innerTools, removeOnInvoke, childToolUsageNotes, true)
+        ): UnfoldingTool = super.of(name, description, innerTools, true, null, false)
 
         @JvmStatic
         @Suppress("DEPRECATION")
@@ -812,7 +854,7 @@ internal class SimpleUnfoldingTool(
     override val innerTools: List<Tool>,
     override val removeOnInvoke: Boolean,
     override val childToolUsageNotes: String? = null,
-    override val includeContextTool: Boolean = true,
+    override val exclusive: Boolean = false,
 ) : MatryoshkaTool {
 
     override fun call(input: String): Tool.Result {
@@ -822,10 +864,7 @@ internal class SimpleUnfoldingTool(
         val shortcutResult = tryShortcutDispatch(input, innerTools)
         if (shortcutResult != null) return shortcutResult
 
-        val toolNames = innerTools.map { it.definition.name }
-        return Tool.Result.text(
-            "Enabled ${innerTools.size} tools: ${toolNames.joinToString(", ")}"
-        )
+        return Tool.Result.text(buildUnfoldedMessage(innerTools, childToolUsageNotes))
     }
 }
 
@@ -839,7 +878,7 @@ internal class SelectableUnfoldingTool(
     override val innerTools: List<Tool>,
     override val removeOnInvoke: Boolean,
     override val childToolUsageNotes: String? = null,
-    override val includeContextTool: Boolean = true,
+    override val exclusive: Boolean = false,
     private val selector: (String) -> List<Tool>,
 ) : MatryoshkaTool {
 
@@ -850,11 +889,30 @@ internal class SelectableUnfoldingTool(
         if (shortcutResult != null) return shortcutResult
 
         val selected = selectTools(input)
-        val toolNames = selected.map { it.definition.name }
-        return Tool.Result.text(
-            "Enabled ${selected.size} tools: ${toolNames.joinToString(", ")}"
-        )
+        return Tool.Result.text(buildUnfoldedMessage(selected, childToolUsageNotes))
     }
+}
+
+/**
+ * Build the message returned when an UnfoldingTool is invoked.
+ *
+ * This message appears as a tool result in the conversation history and is
+ * the **second half of progressive disclosure**: the parent tool's description
+ * advertised the capability up front, and now — after the LLM has chosen to
+ * descend — `childToolUsageNotes` delivers the previously-hidden detail
+ * (workflow, body of an agent skill, when-to-use guidance, etc.) at the
+ * moment it becomes relevant. The "Tools now available: …" preamble redirects
+ * the LLM to the revealed inner tools; the appended notes are the payload.
+ *
+ * @see UnfoldingTool.childToolUsageNotes for the field-level contract.
+ */
+private fun buildUnfoldedMessage(tools: List<Tool>, childToolUsageNotes: String?): String {
+    val toolNames = tools.map { it.definition.name }
+    val preamble = "Tools now available: ${toolNames.joinToString(", ")}. " +
+            "You MUST call one of these tools to complete the user's request. " +
+            "Do NOT respond with text — call a tool."
+    return if (childToolUsageNotes.isNullOrBlank()) preamble
+    else "$preamble\n\n$childToolUsageNotes"
 }
 
 private val shortcutLogger: Logger = LoggerFactory.getLogger("com.embabel.agent.api.tool.progressive.UnfoldingShortcut")

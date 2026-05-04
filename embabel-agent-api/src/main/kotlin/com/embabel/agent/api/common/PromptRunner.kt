@@ -21,6 +21,7 @@ import com.embabel.agent.api.tool.Tool
 import com.embabel.agent.api.tool.ToolCallContext
 import com.embabel.agent.api.tool.ToolObject
 import com.embabel.agent.api.tool.agentic.ToolChaining
+import com.embabel.agent.api.tool.callback.ToolCallInspector
 import com.embabel.agent.api.tool.callback.ToolLoopInspector
 import com.embabel.agent.api.tool.callback.ToolLoopTransformer
 import com.embabel.agent.api.validation.guardrails.GuardRail
@@ -139,6 +140,24 @@ interface PromptRunner : LlmUse, PromptRunnerOperations, ToolChaining<PromptRunn
      */
     fun withToolGroup(toolGroup: String, vararg requiredToolNames: String): PromptRunner =
         withToolGroup(ToolGroupRequirement(toolGroup, requiredToolNames.toSet()))
+
+    /**
+     * Add a tool group with required tool names and a termination scope.
+     * When the group is not found or any required tool name is absent at resolution time,
+     * the behavior depends on [terminationScope]:
+     * - [TerminationScope.AGENT]: throws [com.embabel.agent.api.tool.TerminateAgentException], stopping the agent.
+     * - [TerminationScope.ACTION]: throws [com.embabel.agent.api.tool.TerminateActionException], skipping the action.
+     *
+     * @param toolGroup name of the toolGroup we're requesting
+     * @param terminationScope what to terminate when required tools are missing
+     * @param requiredToolNames tool names that must be present in the resolved group
+     */
+    fun withToolGroup(
+        toolGroup: String,
+        terminationScope: TerminationScope,
+        vararg requiredToolNames: String,
+    ): PromptRunner =
+        withToolGroup(ToolGroupRequirement(toolGroup, requiredToolNames.toSet(), terminationScope))
 
     /**
      * Allows for dynamic tool groups to be added to the PromptRunner.
@@ -382,6 +401,18 @@ interface PromptRunner : LlmUse, PromptRunnerOperations, ToolChaining<PromptRunn
      * @return PromptRunner instance with the added transformers
      */
     fun withToolLoopTransformers(vararg transformers: ToolLoopTransformer): PromptRunner
+
+    /**
+     * Add tool call inspectors for observing individual tool executions.
+     * Unlike [withToolLoopInspectors], these receive only tool-level context
+     * without full conversation history or iteration state.
+     *
+     * Works in both streaming and non-streaming modes.
+     *
+     * @param inspectors the tool call inspectors to add
+     * @return PromptRunner instance with the added inspectors
+     */
+    fun withToolCallInspectors(vararg inspectors: ToolCallInspector): PromptRunner
 
     /**
      * Set out-of-band metadata to pass to tools at call time.

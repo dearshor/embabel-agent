@@ -18,8 +18,8 @@ package com.embabel.agent.rag.tools
 import com.embabel.agent.api.reference.EagerSearch
 import com.embabel.agent.api.reference.LlmReference
 import com.embabel.agent.api.tool.DelegatingTool
-import com.embabel.agent.api.tool.MatryoshkaTool
 import com.embabel.agent.api.tool.Tool
+import com.embabel.agent.api.tool.progressive.UnfoldingTool
 import com.embabel.agent.filter.PropertyFilter
 import com.embabel.agent.rag.filter.EntityFilter
 import com.embabel.agent.rag.model.Chunk
@@ -100,6 +100,15 @@ data class ToolishRag @JvmOverloads constructor(
     val metadataFilter: PropertyFilter? = null,
     val entityFilter: EntityFilter? = null,
     val maxZoomOutChars: Int = ResultExpanderTools.DEFAULT_MAX_ZOOM_OUT_CHARS,
+    /**
+     * Progressively-disclosed guidance appended to the unfold response when
+     * the LLM invokes this tool. Right home for search-strategy notes
+     * (vector vs text, retry-with-synonyms, result-shape) that don't need
+     * to pay the system-prompt tax every turn — they only matter once the
+     * LLM has decided to descend.
+     * See [com.embabel.agent.api.tool.progressive.UnfoldingTool.childToolUsageNotes].
+     */
+    val childToolUsageNotes: String? = null,
 ) : LlmReference, DelegatingTool, EagerSearch<ToolishRag> {
 
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -228,14 +237,15 @@ data class ToolishRag @JvmOverloads constructor(
         .flatMap { Tool.fromInstance(it) }
         .map { tool -> tool.withName(namingStrategy.transform(tool.definition.name)) }
 
-    // Tool interface implementation via lazy MatryoshkaTool
+    // Tool interface implementation via lazy UnfoldingTool
     // When used directly as a Tool, wraps all inner tools in a MatryoshkaTool
     // Implements DelegatingTool so MatryoshkaToolInjectionStrategy can unwrap it
     override val delegate: Tool by lazy {
-        MatryoshkaTool.of(
+        UnfoldingTool.of(
             name = name,
             description = description,
             innerTools = tools(),
+            childToolUsageNotes = childToolUsageNotes,
         )
     }
 

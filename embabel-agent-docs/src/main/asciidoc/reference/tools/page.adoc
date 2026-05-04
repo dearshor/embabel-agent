@@ -227,6 +227,67 @@ val report = invocation.invoke(customerQuery)
 Any tool implementing `DelegatingTool` forwards the context to its delegate by default.
 Built-in decorators like `ArtifactSinkingTool` and `ReplanningTool` follow this pattern, so context reaches the underlying tool without any extra wiring.
 
+===== Per-Loop One-Shot Tools (`OneShotPerLoopTool`)
+
+Some tools are meant to fire **at most once per agentic loop iteration** — typically because the call returns content that, once delivered, lives in the LLM's conversation history for the rest of the turn.
+The canonical example is a *skill activator*: calling it returns the skill body so the LLM can use it; calling it again returns the same body and accomplishes nothing except wasting tokens and a round-trip.
+
+Stronger models follow a system-prompt rule like "call each activator once" reliably.
+Weaker models (qwen, gpt-oss, smaller open models) reflexively re-call the same tool turn after turn even when the body is already in conversation history.
+The system-prompt rule isn't enforceable purely with words — `OneShotPerLoopTool` makes the constraint mechanical.
+
+Wrap the underlying tool with `OneShotPerLoopTool`, supplying an `advice` string that tells the LLM what to do *instead* of calling again:
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+Tool gated = new OneShotPerLoopTool(
+    githubWorkflowsActivator,
+    "Write your script now using the skill body above."
+);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val gated = OneShotPerLoopTool(
+    delegate = githubWorkflowsActivator,
+    advice = "Write your script now using the skill body above.",
+)
+----
+====
+
+The first call within a given loop delegates to the underlying tool as normal.
+Every subsequent call within the same loop short-circuits with:
+
+----
+ALREADY LOADED. The body of '<tool name>' was returned earlier in this turn —
+read it from your conversation history above. Do not call this tool again.
+<advice>
+----
+
+Loop scoping is provided by `LoopMemo` reading `ToolCallContext.loopId()`, so the orchestrator must stamp a fresh loop id per turn:
+
+[source,kotlin]
+----
+val loopId = java.util.UUID.randomUUID().toString()
+context.ai()
+    .withLlm(myLlm)
+    .withToolCallContext(mapOf(ToolCallContext.LOOP_ID_KEY to loopId))
+    .withTools(gatedTools)
+    .respond(messages)
+----
+
+If no loop id is stamped, `LoopMemo`'s documented fallback is "always emit" — every call is treated as the first, so the wrapper degrades to a passthrough rather than silently locking.
+
+Implements `DelegatingTool`, so the underlying tool is reachable via `delegate` and the canonical two-arg `call` overload is the only one a subclass would override.
+
+For the underlying memoisation primitive in isolation (e.g. for "first describe per loop emits the rules block once" inside a tool's own `call`), see `LoopMemo`.
+
 ===== Using Context in Framework-Agnostic Tools
 
 For programmatically created tools, use `Tool.ContextAwareFunction` to receive context in the handler.
@@ -3124,6 +3185,46 @@ After the LLM invokes `spotify_search`, it will see:
 The context tool's description includes the original purpose and available tools.
 When called, it returns full details about each child tool plus the usage notes - providing a single reference point without polluting individual tool descriptions.
 
+===== Exclusive Mode
+
+By default, when an UnfoldingTool is expanded, its inner tools are added alongside any sibling tools already in the tool set.
+In some cases the LLM may ignore the inner tools and instead pick a sibling tool, defeating the purpose of the unfolding.
+
+Setting `exclusive = true` removes **all** other tools when the UnfoldingTool is expanded, so the LLM sees only the inner tools until the interaction ends.
+Use this when the LLM consistently picks the wrong sibling tool instead of using the revealed inner tools.
+
+[tabs]
+====
+Java::
++
+[source,java]
+----
+var personalityTool = UnfoldingTool.of(
+    "change_personality",
+    "Change the assistant's personality. Invoke to see personality options.",
+    List.of(formalTool, casualTool, technicalTool),
+    true,   // removeOnInvoke
+    null,   // childToolUsageNotes
+    true    // exclusive — hide all other tools after expansion
+);
+----
+
+Kotlin::
++
+[source,kotlin]
+----
+val personalityTool = UnfoldingTool.of(
+    name = "change_personality",
+    description = "Change the assistant's personality. Invoke to see personality options.",
+    innerTools = listOf(formalTool, casualTool, technicalTool),
+    exclusive = true, // hide all other tools after expansion
+)
+----
+====
+
+When `exclusive` is false (the default), the parent tool is replaced by its inner tools and all sibling tools remain available.
+When `exclusive` is true, every tool in the current tool set is removed and only the inner tools are injected.
+
 ===== Annotation-Based UnfoldingTool
 
 For a more declarative approach, use the `@UnfoldingTools` class annotation combined with `@LlmTool` method annotations:
@@ -4107,7 +4208,7 @@ When to use `AgentProcessTools`:
 |Budget limits (cost, tokens, actions) and remaining capacity
 
 |`process_cost`
-|Total cost, LLM invocation count, and detailed token usage
+|Total cost (LLM and embedding invocations), invocation counts, and detailed token usage
 
 |`process_history`
 |List of actions taken so far with execution times
@@ -4116,7 +4217,7 @@ When to use `AgentProcessTools`:
 |Tool usage statistics (call counts per tool)
 
 |`process_models`
-|LLM models that have been invoked
+|All models (LLM and embedding) that have been invoked
 |===
 
 [tabs]

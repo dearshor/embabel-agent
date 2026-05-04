@@ -27,6 +27,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import io.micrometer.observation.ObservationRegistry
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.ObjectProvider
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.config.ConfigurableBeanFactory
 import org.springframework.boot.context.properties.ConfigurationProperties
 import org.springframework.boot.context.properties.EnableConfigurationProperties
@@ -35,6 +36,7 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.http.MediaType
 import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.web.client.RestClient
+import org.springframework.web.reactive.function.client.WebClient
 
 @ConfigurationProperties(prefix = "embabel.agent.platform.models.lmstudio")
 class LmStudioProperties : RetryProperties {
@@ -81,12 +83,18 @@ class LmStudioModelsConfig(
     private val lmStudioProperties: LmStudioProperties,
     private val configurableBeanFactory: ConfigurableBeanFactory,
     observationRegistry: ObjectProvider<ObservationRegistry>,
+    @Qualifier("aiModelRestClientBuilder")
+    restClientBuilder: ObjectProvider<RestClient.Builder>,
+    @Qualifier("aiModelWebClientBuilder")
+    webClientBuilder: ObjectProvider<WebClient.Builder>,
 ) : OpenAiCompatibleModelFactory(
     baseUrl = lmStudioProperties.baseUrl,
     apiKey = lmStudioProperties.apiKey,
     completionsPath = null,
     embeddingsPath = null,
-    observationRegistry = observationRegistry.getIfUnique { ObservationRegistry.NOOP }
+    observationRegistry = observationRegistry.getIfUnique { ObservationRegistry.NOOP },
+    restClientBuilder = restClientBuilder,
+    webClientBuilder = webClientBuilder,
 ) {
 
     private val log = LoggerFactory.getLogger(LmStudioModelsConfig::class.java)

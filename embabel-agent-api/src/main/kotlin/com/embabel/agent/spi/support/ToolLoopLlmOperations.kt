@@ -58,8 +58,6 @@ import java.time.Duration
 import java.time.Instant
 import javax.annotation.concurrent.ThreadSafe
 
-const val PROMPT_ELEMENT_SEPARATOR = "\n----\n"
-
 /**
  * Output converter abstraction for parsing LLM output.
  * Framework-agnostic interface that can be implemented by Spring AI converters or others.
@@ -106,7 +104,7 @@ open class ToolLoopLlmOperations(
     dataBindingProperties: LlmDataBindingProperties = LlmDataBindingProperties(),
     autoLlmSelectionCriteriaResolver: AutoLlmSelectionCriteriaResolver = AutoLlmSelectionCriteriaResolver.DEFAULT,
     promptsProperties: LlmOperationsPromptsProperties = LlmOperationsPromptsProperties(),
-    internal open val objectMapper: ObjectMapper = jacksonObjectMapper().registerModule(JavaTimeModule()),
+    objectMapper: ObjectMapper = jacksonObjectMapper().registerModule(JavaTimeModule()),
     protected val observationRegistry: ObservationRegistry = ObservationRegistry.NOOP,
     asyncer: Asyncer = ExecutorAsyncer(java.util.concurrent.Executors.newCachedThreadPool()),
     protected val toolLoopFactory: ToolLoopFactory = ToolLoopFactory.create(ToolLoopConfiguration(), asyncer, AutoCorrectionPolicy()),
@@ -120,6 +118,7 @@ open class ToolLoopLlmOperations(
     autoLlmSelectionCriteriaResolver = autoLlmSelectionCriteriaResolver,
     promptsProperties = promptsProperties,
     asyncer = asyncer,
+    objectMapper = objectMapper,
 ) {
 
     override fun <O> doTransform(
@@ -158,8 +157,9 @@ open class ToolLoopLlmOperations(
             injectionStrategy = injectionStrategy,
             maxIterations = interaction.maxToolIterations,
             toolDecorator = injectedToolDecorator,
-            inspectors = interaction.inspectors,
-            transformers = interaction.transformers,
+            toolLoopInspectors = interaction.toolLoopInspectors,
+            toolLoopTransformers = interaction.toolLoopTransformers,
+            toolCallInspectors = interaction.toolCallInspectors,
             toolCallContext = effectiveContext,
             toolNotFoundPolicy = interaction.toolNotFoundPolicy,
         )
@@ -193,8 +193,11 @@ open class ToolLoopLlmOperations(
                 interaction,
                 llmRequestEvent?.agentProcess?.blackboard
             )
-            // For other object types, we don't have the raw response text to validate
-            // but guardrails could be extended to validate structured objects in the future
+            else -> validateAssistantResponse(
+                result.rawResponseText,
+                interaction,
+                llmRequestEvent?.agentProcess?.blackboard
+            )
         }
 
         return finalResult
@@ -246,8 +249,9 @@ open class ToolLoopLlmOperations(
             injectionStrategy = injectionStrategy,
             maxIterations = interaction.maxToolIterations,
             toolDecorator = injectedToolDecorator,
-            inspectors = interaction.inspectors,
-            transformers = interaction.transformers,
+            toolLoopInspectors = interaction.toolLoopInspectors,
+            toolLoopTransformers = interaction.toolLoopTransformers,
+            toolCallInspectors = interaction.toolCallInspectors,
             toolCallContext = effectiveContext,
             toolNotFoundPolicy = interaction.toolNotFoundPolicy,
         )
@@ -319,7 +323,11 @@ open class ToolLoopLlmOperations(
         when (val successValue = maybeReturn.success) {
             is String -> validateAssistantResponse(successValue, interaction, llmRequestEvent.agentProcess.blackboard)
             is AssistantMessage -> validateAssistantResponse(successValue, interaction, llmRequestEvent.agentProcess.blackboard)
-            // For other object types, we don't have the raw response text to validate
+            else -> validateAssistantResponse(
+                result.rawResponseText,
+                interaction,
+                llmRequestEvent.agentProcess.blackboard
+            )
         }
 
         // Convert MaybeReturn<O> to Result<O>
@@ -376,8 +384,9 @@ open class ToolLoopLlmOperations(
             injectionStrategy = injectionStrategy,
             maxIterations = interaction.maxToolIterations,
             toolDecorator = injectedToolDecorator,
-            inspectors = interaction.inspectors,
-            transformers = interaction.transformers,
+            toolLoopInspectors = interaction.toolLoopInspectors,
+            toolLoopTransformers = interaction.toolLoopTransformers,
+            toolCallInspectors = interaction.toolCallInspectors,
             toolCallContext = effectiveContext,
             toolNotFoundPolicy = interaction.toolNotFoundPolicy,
         )
@@ -479,9 +488,11 @@ open class ToolLoopLlmOperations(
                 injectionStrategy = injectionStrategy,
                 maxIterations = interaction.maxToolIterations,
                 toolDecorator = injectedToolDecorator,
-                inspectors = interaction.inspectors,
-                transformers = interaction.transformers,
+                toolLoopInspectors = interaction.toolLoopInspectors,
+                toolLoopTransformers = interaction.toolLoopTransformers,
+                toolCallInspectors = interaction.toolCallInspectors,
                 toolCallContext = effectiveContext,
+                toolNotFoundPolicy = interaction.toolNotFoundPolicy,
             )
 
             // Build MaybeReturn prompt contribution
@@ -624,10 +635,7 @@ open class ToolLoopLlmOperations(
     protected fun buildPromptContributions(
         interaction: LlmInteraction,
         llm: LlmService<*>,
-    ): String {
-        return (interaction.promptContributors + llm.promptContributors)
-            .joinToString(PROMPT_ELEMENT_SEPARATOR) { it.contribution() }
-    }
+    ): String = buildPromptContributionsString(interaction.promptContributors, llm.promptContributors)
 
     /**
      * Build initial messages for the tool loop, including system prompt contributions and schema.

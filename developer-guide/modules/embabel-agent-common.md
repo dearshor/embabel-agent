@@ -28,6 +28,9 @@ com.embabel.common.ai.model/
 ├── PricingModel.kt           # Cost estimation per token
 └── SpringAiEmbeddingService.kt
 
+com.embabel.common.ai.model.spi/
+└── InternalExtensionApi.kt   # Opt-in annotation for the LlmOptions extension mechanism
+
 com.embabel.common.ai.prompt/
 ├── PromptContributor.kt      # Interface to inject extra text into prompts
 ├── CurrentDate.kt            # Auto-injects current date into every prompt
@@ -56,11 +59,23 @@ Key fields:
 - `temperature: Double?`
 - `maxTokens: Int?`
 - `toolGroups: Set<ToolGroupRequirement>`
+- `extensions: Map<String, Any>` — provider-specific extension values (internal; use provider extension functions)
 
 Common factory methods:
 - `LlmOptions.withModel("gpt-4o")` — select by name
 - `LlmOptions.withAutoLlm()` — automatic selection
 - `LlmOptions()` — use default model
+
+**Provider-specific extensions.** `LlmOptions` carries an opaque `extensions` map that lets provider modules attach their own configuration without coupling the core type to provider dependencies. Application code must use the provider's typed extension functions and must never call the raw `withExtension`/`getExtension` methods directly — those are gated behind `@InternalExtensionApi`. Example (Anthropic caching, from `embabel-agent-anthropic-autoconfigure`):
+
+```kotlin
+val options = LlmOptions()
+    .withAnthropicCaching(systemPrompt = true, tools = true)
+```
+
+#### `InternalExtensionApi` (`com.embabel.common.ai.model.spi`)
+
+Opt-in annotation (`@RequiresOptIn`) that gates the `withExtension`/`getExtension` low-level API on `LlmOptions`. Provider modules opt in to implement new extension functions; application code should never need to opt in.
 
 #### `ModelSelectionCriteria`
 

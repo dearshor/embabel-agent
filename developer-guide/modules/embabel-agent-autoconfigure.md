@@ -80,6 +80,65 @@ The following Claude 4.x model constants are available in `AnthropicModels.kt`:
 | `CLAUDE_OPUS_4_6` | `claude-opus-4-6` |
 | `CLAUDE_SONNET_4_6` | `claude-sonnet-4-6` |
 
+**Anthropic Prompt Caching**
+
+The `embabel-agent-anthropic-autoconfigure` module supports Anthropic's [prompt caching](https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching) feature, which reduces cost and latency by reusing previously-sent prompt content.
+
+Configure caching per LLM call by adding an `AnthropicCachingConfig` to `LlmOptions` via the `withAnthropicCaching` extension function:
+
+```kotlin
+import com.embabel.agent.config.models.anthropic.withAnthropicCaching
+
+val options = LlmOptions()
+    .withAnthropicCaching(
+        systemPrompt = true,        // cache the system prompt
+        tools = true,               // cache tool definitions
+        conversationHistory = false, // don't cache turn history
+    )
+```
+
+For fine-grained control use `AnthropicCachingConfig` directly:
+
+```kotlin
+import com.embabel.agent.config.models.anthropic.AnthropicCachingConfig
+import com.embabel.chat.MessageRole
+import org.springframework.ai.anthropic.api.AnthropicCacheTtl
+
+val config = AnthropicCachingConfig(
+    systemPrompt = true,
+    tools = true,
+).messageTypeTtl(MessageRole.USER, AnthropicCacheTtl.ONE_HOUR)
+
+val options = LlmOptions().withAnthropicCaching(config)
+```
+
+Key pricing points (as of the initial implementation):
+- Cache reads cost 10 % of regular input tokens.
+- Cache writes carry a 25 % premium (5-minute TTL) or higher (1-hour TTL).
+- Minimum cacheable content: 1 024 tokens (4 096 for newer models such as Claude Sonnet 4.5).
+
+Cache strategy is derived automatically from the flags:
+
+| Flags set | Strategy |
+|---|---|
+| `conversationHistory = true` | `CONVERSATION_HISTORY` |
+| `systemPrompt = true` and `tools = true` | `SYSTEM_AND_TOOLS` |
+| `systemPrompt = true` only | `SYSTEM_ONLY` |
+| `tools = true` only | `TOOLS_ONLY` |
+| none | `NONE` |
+
+**Inspecting cache usage.** After an invocation you can read Anthropic-specific cache token counts from `Usage` via extension functions in `UsageExtensions` (file `AnthropicUsage.kt` at JVM level):
+
+```kotlin
+import com.embabel.agent.config.models.anthropic.anthropicCacheSummary
+import com.embabel.agent.config.models.anthropic.anthropicCacheCreationTokens
+import com.embabel.agent.config.models.anthropic.anthropicCacheReadTokens
+
+val summary = usage.anthropicCacheSummary()   // e.g. "cache[creation=1061, read=0]"
+val created = usage.anthropicCacheCreationTokens()  // Int? — null if non-Anthropic
+val read    = usage.anthropicCacheReadTokens()      // Int? — null if non-Anthropic
+```
+
 **ONNX local embeddings**
 
 `embabel-agent-onnx-autoconfigure` wires up `OnnxEmbeddingService` as a local embedding provider using ONNX Runtime and DJL HuggingFace tokenizers. The default model is `all-MiniLM-L6-v2` (384 dimensions). Use the `embabel-agent-starter-onnx` starter to activate.

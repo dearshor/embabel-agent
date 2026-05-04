@@ -20,6 +20,7 @@ This guide is intended for developers who want to understand the internals of th
 | [embabel-agent-mcp](modules/embabel-agent-mcpserver.md) | MCP server (SSE) integration + MCP security (`@SecureAgentTool`) |
 | [embabel-agent-onnx](modules/embabel-agent-onnx.md) | ONNX Runtime local embedding service |
 | [embabel-agent-a2a](modules/embabel-agent-a2a.md) | Google Agent-to-Agent (A2A) protocol |
+| [embabel-agent-skills](modules/embabel-agent-skills.md) | Agent Skills specification: loading, validation, and script execution |
 | [embabel-agent-observability](modules/embabel-agent-observability.md) | OpenTelemetry tracing and Micrometer metrics |
 
 ## Quick orientation
@@ -51,6 +52,7 @@ embabel-agent/
 │   ├── embabel-agent-mcpserver/ #   SSE server implementation
 │   └── embabel-agent-mcp-security/ # @SecureAgentTool enforcement
 ├── embabel-agent-onnx/          # ONNX Runtime local embeddings
+├── embabel-agent-skills/        # Agent Skills specification
 ├── embabel-agent-a2a/           # A2A protocol
 └── embabel-agent-observability/ # Tracing & metrics
 ```

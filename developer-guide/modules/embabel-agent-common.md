@@ -84,6 +84,26 @@ interface PromptContributor {
 }
 ```
 
+#### `TokenCountEstimator<T>`
+
+**Experimental SPI** for estimating the number of tokens in content. Parameterized so that estimators can operate on different content types (e.g. `String` for raw text, or message types for framing-aware estimation).
+
+```kotlin
+@ApiStatus.Experimental
+fun interface TokenCountEstimator<T> {
+    fun estimate(content: T): Int
+}
+```
+
+Built-in implementations:
+- `TokenCountEstimator.NOOP` — always returns 0 (default when no estimator is configured)
+- `TokenCountEstimator.heuristic()` — `CharacterHeuristicTokenCountEstimator` that divides character length by a configurable chars-per-token ratio (default 4, approximates English text across most LLM tokenizers)
+
+```kotlin
+val estimator = TokenCountEstimator.heuristic()
+val tokens = estimator.estimate("Hello, world!")
+```
+
 #### `OptionsConverter`
 
 Each provider module registers a bean of type `OptionsConverter<T>` that translates `LlmOptions` into the provider-specific options type (e.g. `OpenAiChatOptions`). Implement this to add custom option mapping for a new provider.

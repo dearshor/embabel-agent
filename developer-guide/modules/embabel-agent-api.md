@@ -24,7 +24,8 @@ src/main/kotlin/
 ├── com.embabel.agent.api.event/            # AgenticEvent hierarchy
 ├── com.embabel.agent.api.reference/        # LlmReference — typed, lazy LLM object references
 ├── com.embabel.agent.api.tool/             # Tool types
-│   └── progressive/                        # UnfoldingTool, ProgressiveTool
+│   ├── progressive/                        # UnfoldingTool, ProgressiveTool, NestedTool
+│   └── callback/                           # ToolCallInspector, ToolLoopInspector, ToolLoopTransformer
 ├── com.embabel.agent.core/                 # Core runtime types
 │   ├── hitl/                               # Human-in-the-loop (Awaitable etc.)
 │   ├── support/                            # DefaultAgentPlatform, SimpleAgentProcess …
@@ -122,7 +123,7 @@ This is the recommended approach in chatbot actions where a failed LLM call shou
 
 | Type | File | Purpose |
 |---|---|---|
-| `Chatbot` | `chat/Chatbot.kt` | Creates `ChatSession` objects |
+| `Chatbot` | `chat/Chatbot.kt` | Creates `ChatSession` objects; `createSession` now accepts an optional `Budget` parameter |
 | `ChatSession` | `chat/ChatSession.kt` | Single interactive session with a user |
 | `Conversation` | `chat/Conversation.kt` | Ordered list of messages |
 | `AgentProcessChatbot` | `chat/agent/AgentProcessChatbot.kt` | Chatbot backed by an AgentProcess |
@@ -136,19 +137,23 @@ Chat `Message` objects (and their multimodal `ContentPart` members) are fully JS
 | Type | File | Purpose |
 |---|---|---|
 | `Tool` | `api/tool/Tool.kt` | Core tool interface with `call(input)` and `call(input, context)` overloads |
-| `ToolCallContext` | `api/tool/ToolCallContext.kt` | Immutable, framework-agnostic context for out-of-band metadata (auth tokens, tenant IDs, correlation IDs) |
+| `ToolCallContext` | `api/tool/ToolCallContext.kt` | Immutable, framework-agnostic context for out-of-band metadata (auth tokens, tenant IDs, correlation IDs); `loopId()` returns the current agentic-loop identifier |
+| `LoopMemo` | `api/tool/LoopMemo.kt` | Thread-safe bounded LRU memoization — tracks whether a tool has already been invoked in the current loop via `ToolCallContext.loopId` |
+| `OneShotPerLoopTool` | `api/tool/OneShotPerLoopTool.kt` | `DelegatingTool` decorator that allows the delegate to run at most once per agentic loop; subsequent calls short-circuit with a configurable `advice` message |
+| `NestedTool` | `api/tool/progressive/NestedTool.kt` | Interface for tools whose inner tools can be enumerated without an `AgentProcess`; superinterface of `ProgressiveTool` |
 | `DelegatingTool` | `api/tool/DelegatingTool.kt` | Interface for tool decorators; provides canonical two-arg `call(input, context)` entry point |
 | `MethodTool` | `api/tool/MethodTool.kt` | Wraps `@LlmTool`-annotated methods; auto-injects `ToolCallContext` parameters |
 | `ToolCallContextMcpMetaConverter` | `tools/mcp/ToolCallContextMcpMetaConverter.kt` | Filters/transforms `ToolCallContext` entries before sending as MCP `_meta` to remote servers |
 | `ToolResponseContentAdapter` | `spi/support/springai/ToolResponseContentAdapter.kt` | Adapts tool response content for provider-specific format requirements |
 | `JsonWrappingToolResponseContentAdapter` | `spi/support/springai/ToolResponseContentAdapter.kt` | Wraps non-JSON tool responses in `{"result": "..."}` for providers like Google GenAI |
 | `UnfoldingTool` | `api/tool/progressive/UnfoldingTool.kt` | A "Matryoshka" tool that exposes an outer tool; when invoked, replaces itself with a set of inner tools |
-| `ProgressiveTool` | `api/tool/progressive/ProgressiveTool.kt` | Marker interface for tools that evolve during an LLM conversation |
+| `ProgressiveTool` | `api/tool/progressive/ProgressiveTool.kt` | Marker interface for tools that evolve during an LLM conversation; extends `NestedTool` |
 | `ProgressTool` | `api/tool/ProgressTool.kt` | Tool that allows an LLM to report transient progress messages through the output channel |
 | `CommunicateTool` | `api/tool/CommunicateTool.kt` | Tool that allows an LLM to send a permanent assistant chat message through the output channel |
 | `LlmReference` | `api/reference/LlmReference.kt` | Lazy, typed reference to an LLM-created object; resolved on first access |
+| `ToolCallInspector` | `api/tool/callback/ToolCallInspector.kt` | Read-only observer for individual tool call events (before/after); works in both streaming and non-streaming modes |
 
-#### `ToolCallContext` — out-of-band metadata for tools
+#### `ToolCallContext`
 
 `ToolCallContext` is an immutable map-like container that carries metadata (auth tokens, tenant IDs, correlation IDs, etc.) to tools without polluting the tool's JSON input schema. It flows through the entire tool pipeline:
 
@@ -165,7 +170,60 @@ Factory methods:
 - `ToolCallContext.EMPTY` — empty context
 - `ctx1.merge(ctx2)` — merge two contexts (ctx2 wins on conflict)
 
-#### `ToolCallContextMcpMetaConverter` — filtering context for MCP
+#### `LoopMemo` and `OneShotPerLoopTool` — per-loop tool gating
+
+`LoopMemo` is a thread-safe memoization helper that answers "is this the first time we've done X in the current agentic loop?" It reads `ToolCallContext.loopId()` — a UUID stamped per loop iteration — to scope its dedup. Backed by a bounded LRU set (default 1024 entries).
+
+```kotlin
+private val memo = LoopMemo()
+
+override fun call(input: String, context: ToolCallContext): Tool.Result =
+    if (memo.firstTimeIn(context)) Tool.Result.text(expensiveBody)
+    else Tool.Result.text("Already activated this turn — see prior result.")
+```
+
+`OneShotPerLoopTool` is a `DelegatingTool` decorator built on `LoopMemo`. It runs the delegate at most once per loop; subsequent calls return an `ALREADY LOADED` message with caller-supplied `advice`:
+
+```kotlin
+val gated = OneShotPerLoopTool(
+    delegate = skillActivator,
+    advice = "Write your script now using the skill body above.",
+)
+```
+
+#### `ToolCallInspector` — lightweight tool call observation
+
+`ToolCallInspector` provides read-only observation of individual tool call events. Unlike `ToolLoopInspector`, it does not receive conversation history or iteration state, making it suitable for both streaming and non-streaming modes:
+
+```kotlin
+class MetricsToolCallInspector : ToolCallInspector {
+    override fun beforeToolCall(context: BeforeToolCallContext) {
+        // log or record metrics before tool execution
+    }
+    override fun afterToolCall(context: AfterToolCallContext) {
+        // context.durationMs, context.result, context.toolCall available
+    }
+}
+```
+
+Register as a Spring bean or pass directly to `ToolLoopFactory.create()`.
+
+#### `Tool.Definition.metadata` — extensible key-value metadata
+
+`Tool.Definition` now carries an optional `metadata: Map<String, Any>` field for application-level concerns (routing, categorization, feature flags). This metadata is **not** sent to the LLM — it is used by the tool framework and hosting application.
+
+```kotlin
+val def = Tool.Definition(
+    name = "my-tool",
+    description = "...",
+    inputSchema = Tool.InputSchema.empty(),
+    metadata = mapOf("category" to "search", "version" to 2),
+)
+// Add metadata to an existing definition:
+val updated = def.withMetadata("priority", "high")
+```
+
+#### `ToolCallContextMcpMetaConverter`
 
 Controls which `ToolCallContext` entries cross the process boundary to remote MCP servers. This prevents sensitive entries (API keys, auth tokens) from leaking to untrusted servers.
 
@@ -308,6 +366,57 @@ FormBindingRequest(
 | `AgenticEvent` | `api/event/AgenticEvent.kt` | Base event type |
 | `AgentProcessEvent` | `api/event/AgentProcessEvent.kt` | Events scoped to a process |
 | `AgenticEventListener` | `api/event/AgenticEventListener.kt` | Listener interface; implement and register as a bean |
+| `EmbeddingEvent` | `api/event/EmbeddingEvent.kt` | Events for embedding service calls (request/response); independent of `AgentProcess` |
+| `EmbeddingEventListener` | `api/event/EmbeddingEvent.kt` | Functional listener for embedding events; invoked even outside agent processes |
+
+---
+
+## Embedding tracking
+
+`EmbeddingInvocation` and `EmbeddingInvocationHistory` provide cost and usage tracking for embedding service calls, mirroring `LlmInvocation` for chat models.
+
+`AgentProcess` implements `EmbeddingInvocationHistory`, exposing:
+- `embeddingInvocations` — list of `EmbeddingInvocation` records
+- `embeddingCost()` — total dollar cost of embedding calls
+- `embeddingUsage()` — aggregated token usage (prompt tokens only)
+- `embeddingModelsUsed()` — distinct embedding services used
+
+`EmbeddingEvent` (request/response) is emitted by the embedding service independently of any `AgentProcess`. When an agent process is active, the event is also wrapped in `AgentProcessEmbeddingEvent` and dispatched on the standard `AgenticEventListener` channel. Register an `EmbeddingEventListener` bean to observe embedding calls from any context (agents, HTTP controllers, batch jobs).
+
+---
+
+## EmptyResponsePolicy
+
+Configurable policy for handling blank LLM responses (no text, no tool calls) in the tool loop. This is a known failure mode of weak open-weights models after a tool call.
+
+| Policy | Class | Behavior |
+|---|---|---|
+| Exit (default) | `ExitOnEmptyPolicy` | Exit the loop with empty content; caller surfaces `EmptyLlmResponseException` |
+| Retry with feedback | `RetryWithFeedbackPolicy` | Re-prompt the LLM with a nudge message up to N times, then throw |
+| Throw | Return `EmptyResponseAction.Throw` | Throw `EmptyLlmResponseException` immediately |
+
+```kotlin
+// Register as a Spring bean to apply globally:
+@Bean
+fun emptyResponsePolicy(): EmptyResponsePolicy =
+    RetryWithFeedbackPolicy(maxRetries = 2)
+```
+
+Or pass per-prompt via `ToolLoopFactory.create(..., emptyResponsePolicy = ...)`.
+
+---
+
+## `ToolGroupRequirement.terminationScope`
+
+`ToolGroupRequirement` now accepts an optional `terminationScope` parameter that controls the exception type thrown when required tools are missing:
+
+| Value | Exception thrown |
+|---|---|
+| `null` (default) | `RequiredToolGroupException` |
+| `TerminationScope.AGENT` | `TerminateAgentException` |
+| `TerminationScope.ACTION` | `TerminateActionException` |
+
+This allows actions to specify whether a missing tool group should terminate just the current action or the entire agent process.
 
 ---
 
@@ -373,7 +482,7 @@ The `embabel.agent.spi` package contains a clean API for validating a user-suppl
 
 | Type | File | Purpose |
 |---|---|---|
-| `ByokFactory` | `spi/ByokFactory.kt` | Functional interface — validates a key and returns a ready `LlmService` |
+| `ByokFactory<T>` | `common/byok/ByokFactory.kt` | Generic functional interface — validates a key and returns a ready service of type `T` (e.g. `ByokFactory<LlmService<*>>`) |
 | `InvalidApiKeyException` | `spi/InvalidApiKeyException.kt` | Thrown when key validation fails (provider-agnostic) |
 | `detectProvider()` | `spi/ProviderDetection.kt` | Races multiple `ByokFactory` candidates concurrently; returns the first that succeeds |
 

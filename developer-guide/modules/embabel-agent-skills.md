@@ -50,6 +50,25 @@ val skills = Skills(name = "my-skills", description = "Skills for my agent")
     .withScriptExecutionEngine(engine)
 ```
 
+#### Customising the activator tool description
+
+Each per-skill activation tool appends boilerplate text to its description that
+tells the LLM how to invoke scripts. The default (`Skills.DEFAULT_ACTIVATOR_DESCRIPTION_TAIL`)
+describes the `execute_javascript` / `execute_python` convention used by the standard
+code-mode host. If your host exposes scripts differently, override it:
+
+```kotlin
+val skills = Skills(name = "my-skills", description = "Skills for my agent")
+    .withLocalSkills("/path/to/skills")
+    .withActivatorDescriptionTail(
+        "(Skill activator: takes NO arguments. Returns instructions only — " +
+        "call ONCE per turn, then follow the body's guidance to run the bundled script.)"
+    )
+```
+
+This keeps `Skills` agnostic of any particular host invocation surface. Pass
+an empty string to suppress the boilerplate entirely.
+
 Skills supports two consumption modes:
 
 | Mode | Method | Description |
